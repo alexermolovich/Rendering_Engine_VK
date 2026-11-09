@@ -352,3 +352,151 @@ void Renderer::prepare_persistent_descriptors()
     vkUpdateDescriptorSets(b_device, PERSISTENT_BINDING_COUNT, writePersistent, 0, nullptr);
 }
 
+/* Create resources for each technique; rebuild missing targets after resize. */
+void Renderer::init_rendering_tecniques()
+{
+    using F = TechniqueFlags;
+    using P = PipelineType;
+
+    /* shared resource creation helpers */
+    auto load_shader = [this](Shader *&shader, const char *vertex, const char *fragment,
+                              const char *compute) {
+        if (shader)
+            return;
+        auto *slot = std::find_if(std::begin(b_shaders), std::end(b_shaders), [](const Shader &resource) {
+            return !resource.vert && !resource.frag && !resource.geom && !resource.comp;
+        });
+        require(slot != std::end(b_shaders), "RENDERER_SHADER_COUNT capacity exceeded");
+        shader = slot;
+        if (vertex)
+            load_shader_code(*shader, VK_SHADER_STAGE_VERTEX_BIT, vertex);
+        if (fragment)
+            load_shader_code(*shader, VK_SHADER_STAGE_FRAGMENT_BIT, fragment);
+        if (compute)
+            load_shader_code(*shader, VK_SHADER_STAGE_COMPUTE_BIT, compute);
+    };
+    auto color_target = [this](RenderTarget *&target, VkFormat format, const char *name) {
+        if (target)
+            return;
+        RenderTargetDesc desc;
+        desc.width = b_settings.width;
+        desc.height = b_settings.height;
+        desc.format = format;
+        desc.pName = name;
+        add_render_target(b_device, b_physical_device, &desc, &target);
+    };
+    auto create_buffer = [this](Buffer *&buffer, VkDeviceSize size, VkBufferUsageFlags usage,
+                                VkMemoryPropertyFlags memory) {
+        if (buffer)
+            return;
+        BufferDesc desc;
+        desc.size = size;
+        desc.usage = usage;
+        desc.memoryProperties = memory;
+        add_buffer(b_device, b_physical_device, desc, &buffer);
+    };
+
+    /* shared pipeline state */
+    VkPipelineMultisampleStateCreateInfo multisampleState = {};
+    multisampleState.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // Or match your main pass
+    multisampleState.sampleShadingEnable = VK_FALSE;
+    multisampleState.minSampleShading = 1.0f;
+    multisampleState.pSampleMask = nullptr;
+    multisampleState.alphaToCoverageEnable = VK_FALSE;
+    multisampleState.alphaToOneEnable = VK_FALSE;
+
+    VkPipelineRasterizationStateCreateInfo pRasterizationState{};
+    pRasterizationState.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    pRasterizationState.pNext = nullptr;
+    pRasterizationState.flags = 0;
+    pRasterizationState.depthClampEnable = VK_FALSE;
+    pRasterizationState.rasterizerDiscardEnable = VK_FALSE;
+    pRasterizationState.polygonMode = VK_POLYGON_MODE_FILL;
+    pRasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
+    pRasterizationState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    pRasterizationState.depthBiasEnable = VK_FALSE;
+    pRasterizationState.depthBiasConstantFactor = 0.0f;
+    pRasterizationState.depthBiasClamp = 0.0f;
+    pRasterizationState.depthBiasSlopeFactor = 0.0f;
+    pRasterizationState.lineWidth = 1.0f;
+
+    /* triangle filtering resources */
+    {
+        require(b_model_gltf.indexBufferVk, "Scene geometry is required for triangle filtering");
+        create_buffer(b_t_filtered_triangles, b_model_gltf.indexBufferVk->size,
+                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        create_buffer(b_t_filter_indirect_args, sizeof(VkDrawIndexedIndirectCommand),
+                      VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        load_shader(b_shader_computer_filtering, nullptr, nullptr, "shaders/filtering.comp.spv");
+        if (!b_t_filtering_pipeline)
+            b_t_filtering_pipeline = add_pipeline(P::compute, F::triangle_filtering);
+        if (!b_t_filtering_pipeline->handle())
+        {
+            VkPipelineShaderStageCreateInfo shaderStageDesc{};
+
+            shaderStageDesc.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderStageDesc.pNext = nullptr;
+            shaderStageDesc.flags = 0;
+            shaderStageDesc.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            shaderStageDesc.module = b_shader_computer_filtering->comp;
+            shaderStageDesc.pName = "main";
+            shaderStageDesc.pSpecializationInfo = nullptr;
+            VkPipelineRenderingCreateInfo renderingInfo = {};
+            renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+            renderingInfo.colorAttachmentCount = 2;
+
+            VkComputePipelineCreateInfo computeDesc{};
+            computeDesc.layout = b_pipeline_layout;
+            computeDesc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+            VkPipelineShaderStageCreateInfo shaderComputeStageCreateInfo{};
+            shaderComputeStageCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderComputeStageCreateInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            shaderComputeStageCreateInfo.module = b_shader_computer_filtering->comp;
+            shaderComputeStageCreateInfo.pName = "main";
+            computeDesc.stage = shaderComputeStageCreateInfo;
+
+            b_t_filtering_pipeline->create(b_device, computeDesc);
+        }
+    }
+
+    /* cascade filtering resources */
+    {
+        load_shader(b_shader_cascade_shadow_mapping_filtering, nullptr, nullptr, "shaders/filtering_cascade.comp.spv");
+        if (!b_t_filtering_pipeline_cascade_shadow_mapping)
+            b_t_filtering_pipeline_cascade_shadow_mapping = add_pipeline(P::compute, F::cascade_filtering);
+        if (!b_t_filtering_pipeline_cascade_shadow_mapping->handle())
+        {
+            VkPipelineShaderStageCreateInfo shaderStageDesc{};
+            shaderStageDesc.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderStageDesc.pNext = nullptr;
+            shaderStageDesc.flags = 0;
+            shaderStageDesc.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            shaderStageDesc.module = b_shader_cascade_shadow_mapping_filtering->comp;
+            shaderStageDesc.pName = "main";
+            shaderStageDesc.pSpecializationInfo = nullptr;
+            VkPipelineRenderingCreateInfo renderingInfo = {};
+            renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+            renderingInfo.colorAttachmentCount = 2;
+
+            VkComputePipelineCreateInfo computeDesc{};
+            computeDesc.layout = b_pipeline_layout;
+            computeDesc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+
+            VkPipelineShaderStageCreateInfo shaderComputeStageCreateInfo{};
+            shaderComputeStageCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderComputeStageCreateInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            shaderComputeStageCreateInfo.module = b_shader_cascade_shadow_mapping_filtering->comp;
+            shaderComputeStageCreateInfo.pName = "main";
+
+            computeDesc.stage = shaderComputeStageCreateInfo;
+
+            b_t_filtering_pipeline_cascade_shadow_mapping->create(b_device, computeDesc);
+        }
+    }
+
+}
