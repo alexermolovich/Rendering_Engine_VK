@@ -784,4 +784,162 @@ void Renderer::init_rendering_tecniques()
         }
     }
 
+    /* ssao resources */
+    {
+        color_target(b_ssao_rt, VK_FORMAT_R32_SFLOAT, "SSAO_GenRT");
+        if (!b_ssao_kernel_buffer)
+        {
+            generate_ssao_kernel(true);
+            create_buffer(b_ssao_kernel_buffer, sizeof(b_ssao_kernels), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+            map_buffer(b_device, b_ssao_kernel_buffer, b_ssao_kernels);
+        }
+        if (!b_ssao_noise_texture)
+        {
+            generate_ssao_noise();
+            TextureDesc noise;
+            noise.width = SSAO_NOISE_DIM;
+            noise.height = SSAO_NOISE_DIM;
+            noise.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+            noise.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            add_texture(b_device, b_physical_device, noise, &b_ssao_noise_texture);
+            map_texture_data(b_device, b_physical_device, b_graphics_command_pool, b_graphics_queue,
+                             b_ssao_noise_texture, b_ssao_noise, sizeof(b_ssao_noise));
+        }
+        load_shader(b_ssao_shader, "shaders/fullscreen.vert.spv", "shaders/ssao.frag.spv", nullptr);
+        if (!b_ssao_pipeline)
+            b_ssao_pipeline = add_pipeline(P::graphics, F::ssao);
+        if (!b_ssao_pipeline->handle())
+        {
+            VkPipelineDepthStencilStateCreateInfo depthStencilState = {};
+            depthStencilState.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+            depthStencilState.depthTestEnable = VK_FALSE;
+            depthStencilState.depthWriteEnable = VK_FALSE;
+            depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS;
+            depthStencilState.depthBoundsTestEnable = VK_FALSE;
+            depthStencilState.stencilTestEnable = VK_FALSE;
+
+            VkPipelineViewportStateCreateInfo viewportState = {};
+            viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+            viewportState.viewportCount = 1;
+            viewportState.pViewports = nullptr;
+            viewportState.scissorCount = 1;
+            viewportState.pScissors = nullptr;
+            VkVertexInputBindingDescription bindingDescription = {};
+            bindingDescription.binding = 0;
+            bindingDescription.stride = sizeof(GltfModel::Vertex); // 32 bytes (8 floats)
+            bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+            VkPipelineInputAssemblyStateCreateInfo inputAssemblyState{};
+            inputAssemblyState.primitiveRestartEnable = VK_FALSE;
+            inputAssemblyState.topology = VkPrimitiveTopology::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            inputAssemblyState.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+            VkPipelineShaderStageCreateInfo shaderStageDescSSAO[2]{};
+            shaderStageDescSSAO[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderStageDescSSAO[0].pNext = nullptr;
+            shaderStageDescSSAO[0].flags = 0;
+            shaderStageDescSSAO[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+            shaderStageDescSSAO[0].module = b_ssao_shader->vert;
+            shaderStageDescSSAO[0].pName = "main";
+            shaderStageDescSSAO[0].pSpecializationInfo = nullptr;
+            shaderStageDescSSAO[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderStageDescSSAO[1].pNext = nullptr;
+            shaderStageDescSSAO[1].flags = 0;
+            shaderStageDescSSAO[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            shaderStageDescSSAO[1].module = b_ssao_shader->frag;
+            shaderStageDescSSAO[1].pName = "main";
+            shaderStageDescSSAO[1].pSpecializationInfo = nullptr;
+
+            VkPipelineVertexInputStateCreateInfo emptyVI = {};
+            emptyVI.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+            VkPipelineRenderingCreateInfo renderingInfo = {};
+            renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+            renderingInfo.colorAttachmentCount = 1;
+            renderingInfo.pColorAttachmentFormats = &b_ssao_rt->format;
+
+            VkDynamicState dynamicStates[] = {
+                VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_COLOR_WRITE_ENABLE_EXT,
+                VK_DYNAMIC_STATE_VERTEX_INPUT_EXT, VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT};
+
+            VkPipelineDynamicStateCreateInfo dynamicState = {};
+            dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+            dynamicState.dynamicStateCount = 5;
+            dynamicState.pDynamicStates = dynamicStates;
+
+            VkPipelineColorBlendAttachmentState blendAttachments[1] = {};
+            blendAttachments[0].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+            blendAttachments[0].blendEnable = VK_FALSE;
+
+            VkPipelineColorBlendStateCreateInfo colorBlendState{};
+            colorBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+            colorBlendState.attachmentCount = 1;
+            colorBlendState.pAttachments = blendAttachments;
+            colorBlendState.logicOpEnable = VK_FALSE;
+
+            VkGraphicsPipelineCreateInfo gSSAOPipelineDesc{};
+            gSSAOPipelineDesc.pMultisampleState = &multisampleState;
+            gSSAOPipelineDesc.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+
+            gSSAOPipelineDesc.pNext = &renderingInfo;
+            gSSAOPipelineDesc.stageCount = 2;
+            gSSAOPipelineDesc.pStages = shaderStageDescSSAO;
+            gSSAOPipelineDesc.pInputAssemblyState = &inputAssemblyState;
+            gSSAOPipelineDesc.pTessellationState = nullptr;
+            gSSAOPipelineDesc.pViewportState = &viewportState;
+            gSSAOPipelineDesc.pDynamicState = &dynamicState;
+            gSSAOPipelineDesc.pDepthStencilState = &depthStencilState;
+            pRasterizationState.cullMode = VK_CULL_MODE_NONE;
+            gSSAOPipelineDesc.pRasterizationState = &pRasterizationState;
+            gSSAOPipelineDesc.pVertexInputState = VK_NULL_HANDLE;
+            gSSAOPipelineDesc.renderPass = VK_NULL_HANDLE;
+            gSSAOPipelineDesc.layout = b_pipeline_layout;
+            gSSAOPipelineDesc.pVertexInputState = &emptyVI;
+            gSSAOPipelineDesc.flags = 0;
+            gSSAOPipelineDesc.pColorBlendState = &colorBlendState;
+
+            VK_CHECK(
+                vkCreateGraphicsPipelines(b_device, nullptr, 1, &gSSAOPipelineDesc, nullptr, b_ssao_pipeline->put()));
+        }
+    }
+
+    /* ssao blur resources */
+    {
+        color_target(b_ssao_blur_rt, VK_FORMAT_R32_SFLOAT, "SSAO_BlurRT");
+        load_shader(b_ssao_blur_shader, nullptr, nullptr, "shaders/ssao_blur.comp.spv");
+        if (!b_ssao_blur_pipeline)
+            b_ssao_blur_pipeline = add_pipeline(P::compute, F::ssao_blur);
+        if (!b_ssao_blur_pipeline->handle())
+        {
+            VkPipelineShaderStageCreateInfo shaderStageDesc{};
+            shaderStageDesc.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderStageDesc.pNext = nullptr;
+            shaderStageDesc.flags = 0;
+            shaderStageDesc.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            shaderStageDesc.module = b_ssao_blur_shader->comp;
+            shaderStageDesc.pName = "main";
+            shaderStageDesc.pSpecializationInfo = nullptr;
+            VkPipelineRenderingCreateInfo renderingInfo = {};
+            renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+            renderingInfo.colorAttachmentCount = 1;
+            renderingInfo.pColorAttachmentFormats = &b_ssao_rt->format;
+
+            VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                                              VK_DYNAMIC_STATE_COLOR_WRITE_ENABLE_EXT,
+                                              VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT};
+
+            VkPipelineDynamicStateCreateInfo dynamicState = {};
+            dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+            dynamicState.dynamicStateCount = 4;
+            dynamicState.pDynamicStates = dynamicStates;
+
+            VkComputePipelineCreateInfo blurPipelineDesc{};
+            blurPipelineDesc.layout = NULL; //
+            blurPipelineDesc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+            blurPipelineDesc.stage = shaderStageDesc;
+            blurPipelineDesc.layout = b_pipeline_layout;
+            blurPipelineDesc.flags = 0;
+            blurPipelineDesc.pNext = nullptr;
+            b_ssao_blur_pipeline->create(b_device, blurPipelineDesc);
+        }
+    }
+
 }
