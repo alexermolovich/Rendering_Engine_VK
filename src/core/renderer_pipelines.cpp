@@ -1118,4 +1118,106 @@ void Renderer::init_rendering_tecniques()
         }
     }
 
+    /* fxaa resources */
+    {
+        load_shader(b_fxaa_pass_shader, "shaders/fullscreen.vert.spv", "shaders/fxaa_pass.frag.spv", nullptr);
+        if (!b_fxaa_pipeline)
+            b_fxaa_pipeline = add_pipeline(P::graphics, F::fxaa);
+        if (!b_fxaa_pipeline->handle())
+        {
+            VkPipelineDepthStencilStateCreateInfo depthStencilState = {};
+            depthStencilState.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+            depthStencilState.depthTestEnable = VK_FALSE;
+            depthStencilState.depthWriteEnable = VK_FALSE;
+            depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS;
+            depthStencilState.depthBoundsTestEnable = VK_FALSE;
+            depthStencilState.stencilTestEnable = VK_FALSE;
+
+            VkPipelineViewportStateCreateInfo viewportState = {};
+            viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+            viewportState.viewportCount = 1;
+            viewportState.pViewports = nullptr;
+            viewportState.scissorCount = 1;
+            viewportState.pScissors = nullptr;
+
+            VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = {};
+            inputAssemblyState.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+            inputAssemblyState.primitiveRestartEnable = VK_FALSE;
+            inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+            VkPipelineShaderStageCreateInfo shaderStageDesc[2] = {};
+            shaderStageDesc[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderStageDesc[0].pNext = nullptr;
+            shaderStageDesc[0].flags = 0;
+            shaderStageDesc[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+            shaderStageDesc[0].module = b_fxaa_pass_shader->vert;
+            shaderStageDesc[0].pName = "main";
+            shaderStageDesc[0].pSpecializationInfo = nullptr;
+
+            shaderStageDesc[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderStageDesc[1].pNext = nullptr;
+            shaderStageDesc[1].flags = 0;
+            shaderStageDesc[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            shaderStageDesc[1].module = b_fxaa_pass_shader->frag;
+            shaderStageDesc[1].pName = "main";
+            shaderStageDesc[1].pSpecializationInfo = nullptr;
+
+            VkPipelineRenderingCreateInfo renderingInfo = {};
+            renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+            renderingInfo.colorAttachmentCount = 1;
+            renderingInfo.pColorAttachmentFormats = b_swapchain_format;
+
+            VkDynamicState dynamicStates[] = {
+                VK_DYNAMIC_STATE_VIEWPORT,
+                VK_DYNAMIC_STATE_SCISSOR,
+                VK_DYNAMIC_STATE_COLOR_WRITE_ENABLE_EXT,
+            };
+
+            VkPipelineDynamicStateCreateInfo dynamicState = {};
+            dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+            dynamicState.dynamicStateCount = static_cast<uint32_t>(std::size(dynamicStates));
+            dynamicState.pDynamicStates = dynamicStates;
+
+            VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
+            vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+            vertexInputInfo.vertexBindingDescriptionCount = 0;
+            vertexInputInfo.vertexAttributeDescriptionCount = 0;
+
+            VkPipelineRasterizationStateCreateInfo rasterizationState = pRasterizationState;
+            rasterizationState.cullMode = VK_CULL_MODE_NONE;
+
+            VkPipelineColorBlendAttachmentState blendAttachment = {};
+            blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            blendAttachment.blendEnable = VK_FALSE;
+
+            VkPipelineColorBlendStateCreateInfo colorBlendState = {};
+            colorBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+            colorBlendState.attachmentCount = 1;
+            colorBlendState.pAttachments = &blendAttachment;
+            colorBlendState.logicOpEnable = VK_FALSE;
+
+            VkGraphicsPipelineCreateInfo fxaaPipelineDesc = {};
+            fxaaPipelineDesc.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+            fxaaPipelineDesc.pNext = &renderingInfo;
+            fxaaPipelineDesc.stageCount = 2;
+            fxaaPipelineDesc.pStages = shaderStageDesc;
+            fxaaPipelineDesc.pVertexInputState = &vertexInputInfo;
+            fxaaPipelineDesc.pInputAssemblyState = &inputAssemblyState;
+            fxaaPipelineDesc.pTessellationState = nullptr;
+            fxaaPipelineDesc.pViewportState = &viewportState;
+            fxaaPipelineDesc.pRasterizationState = &rasterizationState;
+            fxaaPipelineDesc.pMultisampleState = &multisampleState;
+            fxaaPipelineDesc.pDepthStencilState = &depthStencilState;
+            fxaaPipelineDesc.pColorBlendState = &colorBlendState;
+            fxaaPipelineDesc.pDynamicState = &dynamicState;
+            fxaaPipelineDesc.layout = b_pipeline_layout;
+            fxaaPipelineDesc.renderPass = VK_NULL_HANDLE;
+            fxaaPipelineDesc.subpass = 0;
+            fxaaPipelineDesc.flags = 0;
+
+            b_fxaa_pipeline->create(b_device, fxaaPipelineDesc);
+        }
+    }
+
 }

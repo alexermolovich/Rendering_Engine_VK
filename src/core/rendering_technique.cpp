@@ -485,6 +485,59 @@ void ComposeTechnique::draw(CommandBuffer &command_buffer)
 }
 
 /* Record this pass after Renderer has transitioned its resources. */
+void FxaaTechnique::draw(CommandBuffer &command_buffer)
+{
+    assert(b_renderer.b_compose_image_post_processing_rt->currentLayout ==
+           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    assert(b_renderer.b_swapchain_image_layouts[b_renderer.b_image_index] ==
+           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    VkCommandBuffer cmd = command_buffer.handle();
+    VkViewport viewport = {};
+    viewport.width = (float)b_renderer.b_app_settings->width;
+    viewport.height = (float)b_renderer.b_app_settings->height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor = {};
+    scissor.extent = {b_renderer.b_app_settings->width, b_renderer.b_app_settings->height};
+
+    VkRenderingAttachmentInfo swapchainAttachment = {};
+    swapchainAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    swapchainAttachment.imageView = b_renderer.b_swapchain_image_views[b_renderer.b_image_index];
+    swapchainAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    swapchainAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    swapchainAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    swapchainAttachment.clearValue = {.color = {.float32 = {0.0f, 0.0f, 0.0f, 1.0f}}};
+
+    VkRenderingInfo fxaaRenderingInfo = {};
+    fxaaRenderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    fxaaRenderingInfo.renderArea = {{0, 0},
+                                    {b_renderer.b_app_settings->width, b_renderer.b_app_settings->height}};
+    fxaaRenderingInfo.layerCount = 1;
+    fxaaRenderingInfo.colorAttachmentCount = 1;
+    fxaaRenderingInfo.pColorAttachments = &swapchainAttachment;
+
+    vkCmdBeginRendering(cmd, &fxaaRenderingInfo);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b_renderer.b_fxaa_pipeline->handle());
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    VkBool32 fxaaWrite = VK_TRUE;
+    b_renderer.b_pfn_cmd_set_color_write_enable_ext(cmd, 1, &fxaaWrite);
+
+    VkDescriptorSet fxaaSets[2] = {b_renderer.b_sets_persistent,
+                                   b_renderer.b_sets_per_frame[b_renderer.b_frame_index]};
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b_renderer.b_pipeline_layout, 0, 2,
+                            fxaaSets, 0, nullptr);
+
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
+    vkCmdEndRendering(cmd);
+}
+
+/* Record this pass after Renderer has transitioned its resources. */
 void SsaoBlurTechnique::draw(CommandBuffer &command_buffer)
 {
     assert(b_renderer.b_ssao_rt->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
