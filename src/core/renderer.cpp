@@ -367,3 +367,330 @@ VKAPI_ATTR VkBool32 VKAPI_CALL Renderer::debug_callback(
     return VK_FALSE;
 }
 
+/* Register each pipeline by its type and supported technique bits. */
+GraphicsPipeline *Renderer::add_pipeline(PipelineType type, TechniqueFlags flags)
+{
+    const auto key = pipeline_hash(type, flags);
+    for (uint32_t i = 0; i < b_pipeline_count; ++i)
+        require(pipeline_hash(b_pipelines[i].type(), b_pipelines[i].flags()) != key,
+                "Duplicate pipeline type and technique flags");
+    require(b_pipeline_count < RENDERER_PIPELINE_COUNT, "RENDERER_PIPELINE_COUNT capacity exceeded");
+    auto &pipeline = b_pipelines[b_pipeline_count];
+    pipeline.configure(type, flags);
+    ++b_pipeline_count;
+    return &pipeline;
+}
+
+/* Build the existing scene and passes around a single owner. */
+void Renderer::init()
+{
+    require(!b_initialized && !b_instance, "Renderer has already been initialized");
+    spdlog::info("Initializing renderer");
+    b_window = create_window(800, 600, "Renderer");
+    vulkan_init();
+    VK_CHECK(glfwCreateWindowSurface(b_instance, b_window, nullptr, &b_surface));
+    pick_physical_device(b_instance, b_physical_device, b_surface);
+    create_logical_device(b_physical_device, b_device, b_graphics_queue, b_present_queue, b_surface);
+    load_extension_functions();
+    create_command_pool();
+    create_command_buffer();
+    b_tracy_gpu_context =
+        TracyVkContext(b_physical_device, b_device, b_graphics_queue, b_command_buffers[0].handle());
+    add_swap_chain();
+    add_samplers();
+    init_sky_light();
+    add_buffers();
+    load_sponza();
+    add_textures();
+    add_descriptor_sets();
+    init_rendering_tecniques();
+    prepare_persistent_descriptors();
+    prepare_frame_descriptors();
+    for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
+    {
+        add_fence(b_command_buffer_fences[i]);
+        add_semaphore(b_frame_semaphores[i]);
+    }
+    b_previous_time = glfwGetTime();
+    b_initialized = true;
+    spdlog::info("Renderer ready: {} pipelines, FIFO presentation", b_pipeline_count);
+}
+
+/* Workers only read copies; GLFW and Vulkan queue access stay on the main thread. */
+PreparedFrame Renderer::prepare_frame(uint64_t sequence, Camera camera, Uniform uniform, SkyLightUniform sky)
+{
+    camera.update_view_matrix();
+    camera.update_proj_matrix();
+    PreparedFrame frame;
+    frame.sequence = sequence;
+    frame.camera = camera;
+    frame.uniform = uniform;
+    frame.uniform.cameraPos = camera.pos;
+    frame.uniform.view = camera.get_view_matrix();
+    frame.uniform.proj = camera.get_proj_matrix();
+    frame.uniform.invProjection = glm::inverse(frame.uniform.proj);
+    frame.sky = sky;
+    frame.shadows.lightDirection = glm::vec4(sky.lightDirection, 0.0f);
+    frame.shadows.shadowMapSizeCascadeCount =
+        glm::uvec4(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, MAX_SHADOW_CASCADES, 1);
+    frame.shadows.bias = glm::vec4(0.0005f, 0.0f, 0.0f, 0.0f);
+    update_cascades(camera, sky.lightDirection, frame.shadows.cascades, MAX_SHADOW_CASCADES);
+    return frame;
+}
+
+/* Bounded preparation overlaps CPU work while futures are consumed in FIFO order. */
+void Renderer::run(uint64_t frame_limit)
+{
+    require(b_initialized, "Renderer must be initialized before run");
+    uint64_t scheduled = b_submitted_sequence;
+    const uint64_t end_sequence = frame_limit ? scheduled + frame_limit : UINT64_MAX;
+    while (!glfwWindowShouldClose(b_window) && scheduled < end_sequence)
+    {
+        glfwPollEvents();
+        if (glfwWindowShouldClose(b_window))
+            break;
+        
+        update_camera();
+       
+        const auto sequence = scheduled++;
+        const auto camera = b_camera;
+        const auto uniform = b_uniform_data;
+        const auto sky = b_sky_light_uniform_data;
+      
+        b_prepared_frames.enqueue(
+            [sequence, camera, uniform, sky] { return prepare_frame(sequence, camera, uniform, sky); });
+     
+            if (b_prepared_frames.size() >= FRAMES_IN_FLIGHT)
+            DrawFrame();
+    }
+    while (!b_prepared_frames.empty() && !glfwWindowShouldClose(b_window))
+        DrawFrame();
+    VK_CHECK(vkDeviceWaitIdle(b_device));
+    spdlog::info("Submitted {} frames", b_submitted_sequence);
+}
+
+/* Track the actual image layout at each explicit pass boundary. */
+void Renderer::transition_image(VkCommandBuffer cmd, RenderTarget &target, VkImageLayout layout,
+                                VkPipelineStageFlags source_stage, VkPipelineStageFlags target_stage,
+                                VkAccessFlags source_access, VkAccessFlags target_access)
+{
+    VkImageMemoryBarrier barrier = {};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = target.currentLayout;
+    barrier.newLayout = layout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = target.image;
+    barrier.subresourceRange = {is_depth_format(target.format) ? VK_IMAGE_ASPECT_DEPTH_BIT
+                                                               : VK_IMAGE_ASPECT_COLOR_BIT,
+                                0, target.mipLevels, 0, target.arraySize};
+    barrier.srcAccessMask = target.currentLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : source_access;
+    barrier.dstAccessMask = target_access;
+    vkCmdPipelineBarrier(cmd, source_stage, target_stage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    target.currentLayout = layout;
+}
+
+/* Consume one prepared frame, record the named passes, then submit and present it. */
+void Renderer::DrawFrame()
+{
+    require(b_initialized && !b_prepared_frames.empty(), "No prepared frame is available");
+    PreparedFrame frame = b_prepared_frames.pop();
+    require(frame.sequence == b_submitted_sequence, "Prepared frames arrived out of FIFO order");
+    b_frame_index = static_cast<uint32_t>(frame.sequence % FRAMES_IN_FLIGHT);
+    VkFence fence = b_command_buffer_fences[b_frame_index];
+    VK_CHECK(vkWaitForFences(b_device, 1, &fence, VK_TRUE, UINT64_MAX));
+    VkSemaphore acquired = b_frame_semaphores[b_frame_index];
+    VkResult acquire_result;
+    for (;;)
+    {
+        acquire_result = vkAcquireNextImageKHR(b_device, b_swapchain, UINT64_MAX, acquired, VK_NULL_HANDLE,
+                                               &b_image_index);
+        if (acquire_result != VK_ERROR_OUT_OF_DATE_KHR)
+            break;
+        recreate_swapchain();
+        if (glfwWindowShouldClose(b_window))
+            return;
+    }
+    if (acquire_result != VK_SUBOPTIMAL_KHR)
+        VK_CHECK(acquire_result);
+
+    const float aspect = static_cast<float>(b_settings.width) / b_settings.height;
+    if (frame.camera.aspectRatio != aspect)
+    {
+        frame.camera.update_aspect_ratio(aspect);
+        frame = prepare_frame(frame.sequence, frame.camera, frame.uniform, frame.sky);
+    }
+    b_uniform_data = frame.uniform;
+    b_shadow_gen_uniform_data = frame.shadows;
+    b_sky_light_uniform_data = frame.sky;
+    map_buffer(b_device, b_ubo_buffer[b_frame_index], &frame.uniform);
+    map_buffer(b_device, b_shadow_gen_buffer[b_frame_index], &frame.shadows);
+    map_buffer(b_device, b_sky_lights_data_buffer[b_frame_index], &frame.sky);
+
+    auto &command_buffer = b_command_buffers[b_frame_index];
+    const VkCommandBuffer cmd = command_buffer.handle();
+    VK_CHECK(vkResetCommandBuffer(cmd, 0));
+    VkCommandBufferBeginInfo begin = {};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VK_CHECK(vkBeginCommandBuffer(cmd, &begin));
+    {
+        TracyVkZone(b_tracy_gpu_context, cmd, "Scene Rendering Pass");
+
+        // The current passes share targets and filtering output between frame slots.
+        VkMemoryBarrier previous_frame = {};
+        previous_frame.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        previous_frame.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        previous_frame.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                             1, &previous_frame, 0, nullptr, 0, nullptr);
+
+        VkDrawIndexedIndirectCommand reset = {};
+        reset.instanceCount = 1;
+        vkCmdUpdateBuffer(cmd, b_t_filter_indirect_args->buffer, 0, sizeof(reset), &reset);
+        for (auto *args : b_t_filter_indirect_args_cascade_shadows)
+            if (args)
+                vkCmdUpdateBuffer(cmd, args->buffer, 0, sizeof(reset), &reset);
+        VkMemoryBarrier reset_ready = {};
+        reset_ready.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        reset_ready.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        reset_ready.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &reset_ready, 0, nullptr, 0, nullptr);
+
+        b_cascade_filtering_technique.draw(command_buffer);
+        b_triangle_filtering_technique.draw(command_buffer);
+
+        VkMemoryBarrier filtered_ready = {};
+        filtered_ready.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        filtered_ready.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        filtered_ready.dstAccessMask = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 1,
+                             &filtered_ready, 0, nullptr, 0, nullptr);
+
+        transition_image(cmd, *b_shadow_render_targets.cascadeDepth, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+        b_shadow_depth_technique.draw(command_buffer);
+        transition_image(cmd, *b_shadow_render_targets.cascadeDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                         VK_ACCESS_SHADER_READ_BIT);
+
+        transition_image(cmd, *b_g_buffer_albedo_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        transition_image(cmd, *b_g_buffer_normal_specular_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        transition_image(cmd, *b_depth_buffer_rt, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+        b_g_buffer_technique.draw(command_buffer);
+        transition_image(cmd, *b_g_buffer_albedo_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        transition_image(cmd, *b_g_buffer_normal_specular_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        transition_image(cmd, *b_depth_buffer_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                         VK_ACCESS_SHADER_READ_BIT);
+
+        transition_image(cmd, *b_ssao_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_SHADER_READ_BIT,
+                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        b_ssao_technique.draw(command_buffer);
+        transition_image(cmd, *b_ssao_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        transition_image(cmd, *b_ssao_blur_rt, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                         VK_ACCESS_SHADER_WRITE_BIT);
+        b_ssao_blur_technique.draw(command_buffer);
+        transition_image(cmd, *b_ssao_blur_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+
+        transition_image(cmd, *b_screen_space_reflections_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        b_reflections_technique.draw(command_buffer);
+        transition_image(cmd, *b_screen_space_reflections_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        transition_image(cmd, *b_compose_image_post_processing_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        b_compose_technique.draw(command_buffer);
+        transition_image(cmd, *b_compose_image_post_processing_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+
+        VkImageMemoryBarrier swapchain_barrier = {};
+        swapchain_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        swapchain_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        swapchain_barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        swapchain_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        swapchain_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        swapchain_barrier.image = b_swapchain_images[b_image_index];
+        swapchain_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        swapchain_barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &swapchain_barrier);
+        b_swapchain_image_layouts[b_image_index] = swapchain_barrier.newLayout;
+        b_fxaa_technique.draw(command_buffer);
+        swapchain_barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        swapchain_barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        swapchain_barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        swapchain_barrier.dstAccessMask = 0;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &swapchain_barrier);
+        b_swapchain_image_layouts[b_image_index] = swapchain_barrier.newLayout;
+    }
+    TracyVkCollect(b_tracy_gpu_context, cmd);
+    VK_CHECK(vkEndCommandBuffer(cmd));
+
+    const VkSemaphore rendered = b_render_finished_semaphores[b_image_index];
+    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSubmitInfo submit = {};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.waitSemaphoreCount = 1;
+    submit.pWaitSemaphores = &acquired;
+    submit.pWaitDstStageMask = &wait_stage;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd;
+    submit.signalSemaphoreCount = 1;
+    submit.pSignalSemaphores = &rendered;
+    VK_CHECK(vkResetFences(b_device, 1, &fence));
+    VK_CHECK(vkQueueSubmit(b_graphics_queue, 1, &submit, fence));
+    ++b_submitted_sequence;
+
+    VkPresentInfoKHR present = {};
+    present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    present.waitSemaphoreCount = 1;
+    present.pWaitSemaphores = &rendered;
+    present.swapchainCount = 1;
+    present.pSwapchains = &b_swapchain;
+    present.pImageIndices = &b_image_index;
+    const auto result = vkQueuePresentKHR(b_present_queue, &present);
+    if (result != VK_SUCCESS && result != VK_ERROR_OUT_OF_DATE_KHR && result != VK_SUBOPTIMAL_KHR)
+        VK_CHECK(result);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
+        acquire_result == VK_SUBOPTIMAL_KHR)
+        recreate_swapchain();
+    FrameMark;
+}
+
