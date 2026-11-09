@@ -327,3 +327,336 @@ void Image::from_buffer(unsigned char *buffer, VkDeviceSize size, VkFormat forma
     }
 }
 
+/* Allocate this resource; failed creation rolls back its Vulkan handles. */
+void Buffer::create(VkDevice device, VkPhysicalDevice physical_device, const BufferDesc &desc)
+{
+    require_destroyed(!buffer && !memory, "Buffer creation destination");
+    try
+    {
+
+        require(desc.size > 0, "add_buffer precondition failed");
+
+        VkBufferCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        info.size = desc.size;
+        info.usage = desc.usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        info.sharingMode = desc.sharingMode;
+
+        this->size = desc.size;
+        this->type = (desc.usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)   ? BufferType::uniform
+                     : (desc.usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) ? BufferType::storage
+                                                                         : desc.type;
+        this->purpose = (desc.usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)     ? BufferUsage::vertex_data
+                        : (desc.usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT)    ? BufferUsage::index_data
+                        : (desc.usage & VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT) ? BufferUsage::rendering_output
+                        : (desc.usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)  ? BufferUsage::compute_data
+                        : (desc.usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT)    ? BufferUsage::staging
+                                                                             : desc.purpose;
+
+        VK_CHECK(vkCreateBuffer(device, &info, nullptr, &this->buffer));
+        VkMemoryRequirements memReqs = {};
+        vkGetBufferMemoryRequirements(device, this->buffer, &memReqs);
+
+        VkPhysicalDeviceMemoryProperties memProps = {};
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &memProps);
+
+        uint32_t memTypeIndex = UINT32_MAX;
+        for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i)
+        {
+            if ((memReqs.memoryTypeBits & (1 << i)) &&
+                (memProps.memoryTypes[i].propertyFlags & desc.memoryProperties) == desc.memoryProperties)
+            {
+                memTypeIndex = i;
+                break;
+            }
+        }
+        require(memTypeIndex != UINT32_MAX, "No suitable memory type found");
+        b_memory_properties = memProps.memoryTypes[memTypeIndex].propertyFlags;
+
+        VkMemoryAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReqs.size;
+        allocInfo.memoryTypeIndex = memTypeIndex;
+
+        VkMemoryAllocateFlagsInfo allocFlagsInfo = {};
+        if (desc.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+        {
+            allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+            allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+            allocInfo.pNext = &allocFlagsInfo;
+        }
+
+        VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &this->memory));
+        VK_CHECK(vkBindBufferMemory(device, this->buffer, this->memory, 0));
+
+        this->descInfo.buffer = this->buffer;
+        this->descInfo.offset = 0;
+        this->descInfo.range = desc.size;
+    }
+    catch (...)
+    {
+        destroy(device);
+        throw;
+    }
+}
+
+/* Allocate this resource; failed creation rolls back its Vulkan handles. */
+void Image::create(VkDevice device, VkPhysicalDevice physical_device, const TextureDesc &desc)
+{
+    require_destroyed(!image && !view && !memory && !sampler, "Image creation destination");
+    try
+    {
+
+        require(desc.width > 0 && desc.height > 0, "add_texture precondition failed");
+
+        this->width = desc.width;
+        this->height = desc.height;
+        this->mipLevels = desc.mipLevels;
+        this->format = desc.format;
+        VkImageCreateInfo imageInfo = {};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = desc.format;
+        imageInfo.extent = {(uint32_t)desc.width, (uint32_t)desc.height, 1};
+        imageInfo.mipLevels = desc.mipLevels;
+        imageInfo.arrayLayers = 1;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = desc.usage;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VK_CHECK(vkCreateImage(device, &imageInfo, nullptr, &this->image));
+        currentLayout = imageInfo.initialLayout;
+        VkMemoryRequirements memReqs = {};
+        vkGetImageMemoryRequirements(device, this->image, &memReqs);
+
+        VkPhysicalDeviceMemoryProperties memProps = {};
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &memProps);
+
+        uint32_t memTypeIndex = UINT32_MAX;
+        for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i)
+        {
+            if ((memReqs.memoryTypeBits & (1 << i)) &&
+                (memProps.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+            {
+                memTypeIndex = i;
+                break;
+            }
+        }
+        require(memTypeIndex != UINT32_MAX, "add_texture precondition failed");
+
+        VkMemoryAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReqs.size;
+        allocInfo.memoryTypeIndex = memTypeIndex;
+        VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &this->memory));
+        VK_CHECK(vkBindImageMemory(device, this->image, this->memory, 0));
+        VkImageViewCreateInfo viewInfo = {};
+
+        VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+        if (desc.format == VK_FORMAT_D32_SFLOAT || desc.format == VK_FORMAT_D16_UNORM)
+        {
+            aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+        }
+        else if (desc.format == VK_FORMAT_D24_UNORM_S8_UINT || desc.format == VK_FORMAT_D32_SFLOAT_S8_UINT)
+        {
+            aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+        }
+        viewInfo.subresourceRange.aspectMask = aspect;
+
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = this->image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = desc.format;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = desc.mipLevels;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+        VK_CHECK(vkCreateImageView(device, &viewInfo, nullptr, &this->view));
+        this->descInfo.imageView = this->view;
+        this->descInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        this->descInfo.sampler = VK_NULL_HANDLE; // set externally from your sampler
+    }
+    catch (...)
+    {
+        destroy(device);
+        throw;
+    }
+}
+
+/* Allocate this resource; failed creation rolls back its Vulkan handles. */
+void Sampler::create(VkDevice device, const SamplerDesc &desc)
+{
+    require_destroyed(!sampler, "Sampler creation destination");
+    try
+    {
+
+        VkSamplerCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        info.magFilter = desc.magFilter;
+        info.minFilter = desc.minFilter;
+        info.mipmapMode = desc.mipmapMode;
+        info.addressModeU = desc.addressModeU;
+        info.addressModeV = desc.addressModeV;
+        info.addressModeW = desc.addressModeW;
+        info.mipLodBias = desc.mipLodBias;
+        info.anisotropyEnable = desc.anisotropyEnable;
+        info.maxAnisotropy = desc.maxAnisotropy;
+        info.compareEnable = desc.compareEnable;
+        info.compareOp = desc.compareOp;
+        info.minLod = desc.minLod;
+        info.maxLod = desc.maxLod;
+        info.borderColor = desc.borderColor;
+        info.unnormalizedCoordinates = desc.unnormalizedCoordinates;
+
+        VK_CHECK(vkCreateSampler(device, &info, nullptr, &this->sampler));
+
+        this->descInfo.sampler = this->sampler;
+        this->descInfo.imageView = VK_NULL_HANDLE;
+        this->descInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+    catch (...)
+    {
+        destroy(device);
+        throw;
+    }
+}
+
+/* Allocate this resource; failed creation rolls back its Vulkan handles. */
+void RenderTarget::create(VkDevice device, VkPhysicalDevice physical_device, const RenderTargetDesc &desc)
+{
+    require_destroyed(!image && !imageView && !sampledView && !memory && !sampler,
+                      "RenderTarget creation destination");
+    try
+    {
+
+        this->width = desc.width;
+        this->height = desc.height;
+        this->depth = desc.depth;
+        this->arraySize = desc.arraySize;
+        this->mipLevels = desc.mipLevels;
+        this->format = desc.format;
+        this->sampleCount = desc.sampleCount;
+        this->clearValue = desc.clearValue;
+        this->currentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        this->pName = desc.pName;
+
+        VkImageCreateInfo imageInfo = {};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = desc.depth > 1 ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+        imageInfo.format = desc.format;
+        imageInfo.extent.width = desc.width;
+        imageInfo.extent.height = desc.height;
+        imageInfo.extent.depth = desc.depth;
+        imageInfo.mipLevels = desc.mipLevels;
+        imageInfo.arrayLayers = desc.arraySize;
+        imageInfo.samples = desc.sampleCount;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = desc.usageFlags;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VK_CHECK(vkCreateImage(device, &imageInfo, nullptr, &this->image));
+
+        VkMemoryRequirements memReqs;
+        vkGetImageMemoryRequirements(device, this->image, &memReqs);
+
+        VkMemoryAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReqs.size;
+        allocInfo.memoryTypeIndex = Image::find_memory_type(physical_device, memReqs.memoryTypeBits,
+                                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &this->memory));
+        VK_CHECK(vkBindImageMemory(device, this->image, this->memory, 0));
+
+        VkImageViewCreateInfo viewInfo = {};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = this->image;
+        viewInfo.viewType = desc.arraySize > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = desc.format;
+        viewInfo.subresourceRange.aspectMask =
+            (desc.format == VK_FORMAT_D16_UNORM || desc.format == VK_FORMAT_D32_SFLOAT ||
+             desc.format == VK_FORMAT_D16_UNORM_S8_UINT || desc.format == VK_FORMAT_D24_UNORM_S8_UINT ||
+             desc.format == VK_FORMAT_D32_SFLOAT_S8_UINT)
+                ? VK_IMAGE_ASPECT_DEPTH_BIT
+                : VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = desc.mipLevels;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = desc.arraySize;
+
+        VK_CHECK(vkCreateImageView(device, &viewInfo, nullptr, &this->imageView));
+
+        if (desc.usageFlags & VK_IMAGE_USAGE_SAMPLED_BIT)
+        {
+            VK_CHECK(vkCreateImageView(device, &viewInfo, nullptr, &this->sampledView));
+        }
+
+        VkImageLayout descriptorLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        this->imageInfo.imageLayout = descriptorLayout;
+        this->imageInfo.imageView = this->sampledView != VK_NULL_HANDLE ? this->sampledView : this->imageView;
+        this->imageInfo.sampler = VK_NULL_HANDLE; // set externally if COMBINED_IMAGE_SAMPLER
+    }
+    catch (...)
+    {
+        destroy(device);
+        throw;
+    }
+}
+
+/* Upload mapped data and flush allocations that are not host coherent. */
+void Buffer::write(VkDevice device, const void *pData)
+{
+    require(buffer && memory && size, "Buffer write requires a live allocation");
+    require(b_memory_properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+            "Buffer allocation is not host visible");
+
+    require(pData, "map_buffer precondition failed");
+
+    void *pMapped = nullptr;
+    VK_CHECK(vkMapMemory(device, this->memory, 0, VK_WHOLE_SIZE, 0, &pMapped));
+    memcpy(pMapped, pData, (size_t)this->size);
+    VkResult flush = VK_SUCCESS;
+    if (!(b_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+    {
+        VkMappedMemoryRange range = {};
+        range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        range.memory = memory;
+        range.size = VK_WHOLE_SIZE;
+        flush = vkFlushMappedMemoryRanges(device, 1, &range);
+    }
+    vkUnmapMemory(device, this->memory);
+    VK_CHECK(flush);
+}
+
+/* Keep each stage separate so partially loaded programs can be explicitly released. */
+void Shader::load(VkDevice device, VkShaderStageFlagBits stage, std::span<const uint32_t> code)
+{
+    require(!code.empty(), "Shader code is empty");
+    VkShaderModule *module = nullptr;
+    switch (stage)
+    {
+    case VK_SHADER_STAGE_VERTEX_BIT:
+        module = &vert;
+        break;
+    case VK_SHADER_STAGE_FRAGMENT_BIT:
+        module = &frag;
+        break;
+    case VK_SHADER_STAGE_GEOMETRY_BIT:
+        module = &geom;
+        break;
+    case VK_SHADER_STAGE_COMPUTE_BIT:
+        module = &comp;
+        break;
+    default:
+        throw std::runtime_error("Unsupported shader stage");
+    }
+    require_destroyed(!*module, "Shader stage replacement");
+    VkShaderModuleCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    info.codeSize = code.size() * sizeof(uint32_t);
+    info.pCode = code.data();
+    VK_CHECK(vkCreateShaderModule(device, &info, nullptr, module));
+}
