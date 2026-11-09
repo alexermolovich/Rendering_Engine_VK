@@ -1,0 +1,21 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "wsl-linux-debug",
+            "displayName": "WSL Linux Debug",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "vendor": {
+                "://microsoft.com": {
+                    "hostOS": [
+                        "Linux"
+                    ]
+                }
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        }
+    ]
+}
