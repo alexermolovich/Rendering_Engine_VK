@@ -359,6 +359,132 @@ void SsaoTechnique::draw(CommandBuffer &command_buffer)
 }
 
 /* Record this pass after Renderer has transitioned its resources. */
+void ReflectionsTechnique::draw(CommandBuffer &command_buffer)
+{
+    assert(b_renderer.b_depth_buffer_rt->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(b_renderer.b_g_buffer_normal_specular_rt->currentLayout ==
+           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(b_renderer.b_g_buffer_albedo_rt->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(b_renderer.b_screen_space_reflections_rt->currentLayout ==
+           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    VkCommandBuffer cmd = command_buffer.handle();
+    VkViewport viewport = {};
+    viewport.width = (float)b_renderer.b_app_settings->width;
+    viewport.height = (float)b_renderer.b_app_settings->height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor = {};
+    scissor.extent = {b_renderer.b_app_settings->width, b_renderer.b_app_settings->height};
+
+    VkRenderingAttachmentInfo reflectionsAttachment = {};
+    reflectionsAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    reflectionsAttachment.imageView = b_renderer.b_screen_space_reflections_rt->imageView;
+    reflectionsAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    reflectionsAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    reflectionsAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    reflectionsAttachment.clearValue = b_renderer.b_screen_space_reflections_rt->clearValue;
+
+    VkRenderingInfo reflectionsRenderingInfo = {};
+    reflectionsRenderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    reflectionsRenderingInfo.renderArea = {
+        {0, 0}, {b_renderer.b_app_settings->width, b_renderer.b_app_settings->height}};
+    reflectionsRenderingInfo.layerCount = 1;
+    reflectionsRenderingInfo.colorAttachmentCount = 1;
+    reflectionsRenderingInfo.pColorAttachments = &reflectionsAttachment;
+
+    vkCmdBeginRendering(cmd, &reflectionsRenderingInfo);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b_renderer.b_screen_space_reflections_pipeline->handle());
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    VkBool32 reflectionsWrite = VK_TRUE;
+    b_renderer.b_pfn_cmd_set_color_write_enable_ext(cmd, 1, &reflectionsWrite);
+    VkDescriptorSet reflectionsSets[2] = {b_renderer.b_sets_persistent,
+                                          b_renderer.b_sets_per_frame[b_renderer.b_frame_index]};
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b_renderer.b_pipeline_layout, 0, 2,
+                            reflectionsSets, 0, nullptr);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRendering(cmd);
+}
+
+/* Record this pass after Renderer has transitioned its resources. */
+void ComposeTechnique::draw(CommandBuffer &command_buffer)
+{
+    assert(b_renderer.b_depth_buffer_rt->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(b_renderer.b_g_buffer_albedo_rt->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(b_renderer.b_g_buffer_normal_specular_rt->currentLayout ==
+           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(b_renderer.b_ssao_rt->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(b_renderer.b_screen_space_reflections_rt->currentLayout ==
+           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(b_renderer.b_shadow_render_targets.cascadeDepth->currentLayout ==
+           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(b_renderer.b_compose_image_post_processing_rt->currentLayout ==
+           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    VkCommandBuffer cmd = command_buffer.handle();
+    VkViewport viewport = {};
+    viewport.width = (float)b_renderer.b_app_settings->width;
+    viewport.height = (float)b_renderer.b_app_settings->height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor = {};
+    scissor.extent = {b_renderer.b_app_settings->width, b_renderer.b_app_settings->height};
+
+    VkRenderingAttachmentInfo composeAttachment = {};
+    composeAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    composeAttachment.imageView = b_renderer.b_compose_image_post_processing_rt->imageView;
+    composeAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    composeAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    composeAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    composeAttachment.clearValue = b_renderer.b_compose_image_post_processing_rt->clearValue;
+
+    VkRenderingInfo composeRenderingInfo = {};
+    composeRenderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    composeRenderingInfo.renderArea = {{0, 0},
+                                       {b_renderer.b_app_settings->width, b_renderer.b_app_settings->height}};
+    composeRenderingInfo.layerCount = 1;
+    composeRenderingInfo.colorAttachmentCount = 1;
+    composeRenderingInfo.pColorAttachments = &composeAttachment;
+
+    vkCmdBeginRendering(cmd, &composeRenderingInfo);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b_renderer.b_compose_pipeline->handle());
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    VkBool32 compWrite = VK_TRUE;
+    b_renderer.b_pfn_cmd_set_color_write_enable_ext(cmd, 1, &compWrite);
+
+    VkDescriptorSet composeSets[2] = {b_renderer.b_sets_persistent,
+                                      b_renderer.b_sets_per_frame[b_renderer.b_frame_index]};
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b_renderer.b_pipeline_layout, 0, 2,
+                            composeSets, 0, nullptr);
+
+    ComposePushConstants composePushConstants = {};
+    composePushConstants.directionalLight[0].directionIntensity =
+        glm::vec4(b_renderer.b_sky_light_uniform_data.lightDirection,
+                  b_renderer.b_sky_light_uniform_data.lightIntensity);
+    composePushConstants.directionalLight[0].color =
+        glm::vec4(b_renderer.b_sky_light_uniform_data.lightColor, 1.0f);
+    composePushConstants.active_directionalLight = 1;
+    composePushConstants.active_pointlight = 0;
+    vkCmdPushConstants(cmd, b_renderer.b_pipeline_layout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                           VK_SHADER_STAGE_COMPUTE_BIT,
+                       0, sizeof(ComposePushConstants), &composePushConstants);
+    {
+        VkBool32 colorWriteEnables[1] = {VK_TRUE};
+        b_renderer.b_pfn_cmd_set_color_write_enable_ext(cmd, 1, colorWriteEnables);
+    }
+
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
+    vkCmdEndRendering(cmd);
+}
+
+/* Record this pass after Renderer has transitioned its resources. */
 void SsaoBlurTechnique::draw(CommandBuffer &command_buffer)
 {
     assert(b_renderer.b_ssao_rt->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
