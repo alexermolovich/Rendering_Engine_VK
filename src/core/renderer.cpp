@@ -694,3 +694,255 @@ void Renderer::DrawFrame()
     FrameMark;
 }
 
+/* Rebuild extent-dependent state after the surface changes. */
+void Renderer::recreate_swapchain()
+{
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(b_window, &width, &height);
+    while (!width || !height)
+    {
+        if (glfwWindowShouldClose(b_window))
+            return;
+        glfwWaitEvents();
+        glfwGetFramebufferSize(b_window, &width, &height);
+    }
+    VK_CHECK(vkDeviceWaitIdle(b_device));
+    destroy_render_targets();
+    destroy_swapchain();
+    b_settings.width = static_cast<uint32_t>(width);
+    b_settings.height = static_cast<uint32_t>(height);
+    add_swap_chain();
+    b_camera.update_aspect_ratio(static_cast<float>(b_settings.width) / b_settings.height);
+    b_camera.update_proj_matrix();
+    init_rendering_tecniques();
+    prepare_persistent_descriptors();
+    spdlog::info("Recreated swapchain: {}x{}", b_settings.width, b_settings.height);
+}
+
+/* Layer views must be released before the array image. */
+void Renderer::destroy_render_targets()
+{
+    auto &shadow = b_shadow_render_targets;
+    for (auto &view : shadow.cascadeLayerViews)
+    {
+        if (view)
+            vkDestroyImageView(b_device, view, nullptr);
+        view = VK_NULL_HANDLE;
+    }
+    shadow.cascadeDepth = nullptr;
+    for (auto &target : b_render_targets)
+        target.destroy(b_device);
+    b_g_buffer_albedo_rt = nullptr;
+    b_g_buffer_normal_specular_rt = nullptr;
+    b_depth_buffer_rt = nullptr;
+    b_ssao_rt = nullptr;
+    b_ssao_blur_rt = nullptr;
+    b_screen_space_reflections_rt = nullptr;
+    b_compose_image_post_processing_rt = nullptr;
+}
+
+/* Presentation semaphores belong to swapchain images, not CPU frame slots. */
+void Renderer::destroy_swapchain()
+{
+    for (auto &semaphore : b_render_finished_semaphores)
+    {
+        if (semaphore)
+            vkDestroySemaphore(b_device, semaphore, nullptr);
+        semaphore = VK_NULL_HANDLE;
+    }
+    for (auto &view : b_swapchain_image_views)
+    {
+        if (view)
+            vkDestroyImageView(b_device, view, nullptr);
+        view = VK_NULL_HANDLE;
+    }
+    std::fill_n(b_swapchain_images, SWAPCHAIN_IMAGE_CAPACITY, VK_NULL_HANDLE);
+    std::fill_n(b_swapchain_image_layouts, SWAPCHAIN_IMAGE_CAPACITY, VK_IMAGE_LAYOUT_UNDEFINED);
+    b_swapchain_image_count = 0;
+    if (b_swapchain)
+        vkDestroySwapchainKHR(b_device, b_swapchain, nullptr);
+    b_swapchain = VK_NULL_HANDLE;
+}
+
+Renderer::~Renderer()
+{
+    shutdown();
+}
+
+/* Also handles partially completed initialization after an exception. */
+void Renderer::shutdown()
+{
+    b_prepared_frames.clear();
+    if (b_device)
+    {
+        const auto result = vkDeviceWaitIdle(b_device);
+        if (result != VK_SUCCESS)
+            spdlog::error("Device wait during shutdown: {}", static_cast<int>(result));
+        if (b_tracy_gpu_context)
+            TracyVkDestroy(b_tracy_gpu_context);
+        b_tracy_gpu_context = nullptr;
+        if (b_descriptor_pool)
+            vkDestroyDescriptorPool(b_device, b_descriptor_pool, nullptr);
+        b_descriptor_pool = VK_NULL_HANDLE;
+        b_sets_persistent = VK_NULL_HANDLE;
+        for (auto &set : b_sets_per_frame)
+            set = VK_NULL_HANDLE;
+        for (auto &pipeline : b_pipelines)
+            pipeline.destroy(b_device);
+        b_pipeline_count = 0;
+        for (auto &shader : b_shaders)
+            shader.destroy(b_device);
+        destroy_render_targets();
+        b_model_gltf.destroy(b_device);
+        for (auto &image : b_images)
+            image.destroy(b_device);
+        for (auto &buffer : b_buffers)
+            buffer.destroy(b_device);
+        for (auto &sampler : b_samplers)
+            sampler.destroy(b_device);
+        destroy_swapchain();
+        if (b_pipeline_layout)
+            vkDestroyPipelineLayout(b_device, b_pipeline_layout, nullptr);
+        if (b_per_frame_layout)
+            vkDestroyDescriptorSetLayout(b_device, b_per_frame_layout, nullptr);
+        if (b_persistent_layout)
+            vkDestroyDescriptorSetLayout(b_device, b_persistent_layout, nullptr);
+        b_pipeline_layout = VK_NULL_HANDLE;
+        b_per_frame_layout = VK_NULL_HANDLE;
+        b_persistent_layout = VK_NULL_HANDLE;
+        for (auto &command : b_command_buffers)
+            command.destroy(b_device, b_graphics_command_pool);
+        if (b_graphics_command_pool)
+            vkDestroyCommandPool(b_device, b_graphics_command_pool, nullptr);
+        b_graphics_command_pool = VK_NULL_HANDLE;
+        for (auto &semaphore : b_frame_semaphores)
+        {
+            if (semaphore)
+                vkDestroySemaphore(b_device, semaphore, nullptr);
+            semaphore = VK_NULL_HANDLE;
+        }
+        for (auto &fence : b_command_buffer_fences)
+        {
+            if (fence)
+                vkDestroyFence(b_device, fence, nullptr);
+            fence = VK_NULL_HANDLE;
+        }
+        vkDestroyDevice(b_device, nullptr);
+        b_device = VK_NULL_HANDLE;
+    }
+    if (b_surface)
+        vkDestroySurfaceKHR(b_instance, b_surface, nullptr);
+    b_surface = VK_NULL_HANDLE;
+    if (b_debug_messenger)
+    {
+        auto destroy = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+            vkGetInstanceProcAddr(b_instance, "vkDestroyDebugUtilsMessengerEXT"));
+        if (destroy)
+            destroy(b_instance, b_debug_messenger, nullptr);
+        b_debug_messenger = VK_NULL_HANDLE;
+    }
+    if (b_instance)
+        vkDestroyInstance(b_instance, nullptr);
+    b_instance = VK_NULL_HANDLE;
+    if (b_window)
+        glfwDestroyWindow(b_window);
+    b_window = nullptr;
+    if (b_glfw_initialized)
+        glfwTerminate();
+    b_glfw_initialized = false;
+    b_initialized = false;
+    b_t_filtering_pipeline = nullptr;
+    b_shader_computer_filtering = nullptr;
+    b_t_filtered_triangles = nullptr;
+    b_t_filter_indirect_args = nullptr;
+    b_t_filtering_pipeline_cascade_shadow_mapping = nullptr;
+    b_shader_cascade_shadow_mapping_filtering = nullptr;
+    std::fill_n(b_t_filtered_triangles_cascade_shadows, std::size(b_t_filtered_triangles_cascade_shadows), nullptr);
+    std::fill_n(b_t_filter_indirect_args_cascade_shadows, std::size(b_t_filter_indirect_args_cascade_shadows), nullptr);
+    b_shadow_depth_pipeline = nullptr;
+    b_shadow_depth_shader = nullptr;
+    b_shadow_gen_uniform_data = {};
+    b_shadow_render_targets = {};
+    std::fill_n(b_shadow_gen_buffer, std::size(b_shadow_gen_buffer), nullptr);
+    b_g_buffer_pipeline = nullptr;
+    b_g_buffer_shader = nullptr;
+    b_g_buffer_normal_specular_rt = nullptr;
+    b_g_buffer_albedo_rt = nullptr;
+    b_depth_buffer_rt = nullptr;
+    b_ssao_pipeline = nullptr;
+    b_ssao_blur_pipeline = nullptr;
+    b_ssao_shader = nullptr;
+    b_ssao_blur_shader = nullptr;
+    b_ssao_blur_rt = nullptr;
+    b_ssao_rt = nullptr;
+    b_ssao_kernel_buffer = nullptr;
+    b_ssao_noise_texture = nullptr;
+    std::fill_n(b_ssao_kernels, std::size(b_ssao_kernels), glm::vec4(0.0f));
+    std::fill_n(b_ssao_noise, std::size(b_ssao_noise), glm::vec4(0.0f));
+    b_screen_space_reflections_pipeline = nullptr;
+    b_screen_space_reflections_shader = nullptr;
+    b_screen_space_reflections_rt = nullptr;
+    b_compose_pipeline = nullptr;
+    b_compose_shader = nullptr;
+    b_compose_image_post_processing_rt = nullptr;
+    b_fxaa_pipeline = nullptr;
+    b_fxaa_pass_shader = nullptr;
+    b_submitted_sequence = 0;
+    b_frame_index = 0;
+    b_image_index = 0;
+}
+
+/* Sample input on the GLFW thread before taking a frame snapshot. */
+void Renderer::update_camera()
+{
+    double &previousTime = b_previous_time;
+    double currentTime = glfwGetTime();
+    float deltaTime = static_cast<float>(currentTime - previousTime);
+    previousTime = currentTime;
+
+    glm::vec3 moveDelta(0.0f);
+    glm::vec3 forward = glm::normalize(glm::vec3(b_camera.dir.x, 0.0f, b_camera.dir.z));
+    glm::vec3 right = glm::normalize(glm::cross(forward, b_camera.worldUp));
+    float moveAmount = b_camera_move_speed * deltaTime;
+
+    if (glfwGetKey(b_window, GLFW_KEY_W) == GLFW_PRESS)
+        moveDelta += forward * moveAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_S) == GLFW_PRESS)
+        moveDelta -= forward * moveAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_D) == GLFW_PRESS)
+        moveDelta += right * moveAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_A) == GLFW_PRESS)
+        moveDelta -= right * moveAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_E) == GLFW_PRESS)
+        moveDelta += b_camera.worldUp * moveAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_Q) == GLFW_PRESS)
+        moveDelta -= b_camera.worldUp * moveAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_H) == GLFW_PRESS)
+        moveDelta += b_camera.worldUp * moveAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_J) == GLFW_PRESS)
+        moveDelta -= b_camera.worldUp * moveAmount;
+
+    if (glm::length(moveDelta) > 0.0f)
+    {
+        b_camera.set_position(b_camera.pos + moveDelta);
+    }
+
+    float turnAmount = b_camera_turn_speed * deltaTime;
+    if (glfwGetKey(b_window, GLFW_KEY_LEFT) == GLFW_PRESS)
+        b_camera_yaw -= turnAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+        b_camera_yaw += turnAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_UP) == GLFW_PRESS)
+        b_camera_pitch += turnAmount;
+    if (glfwGetKey(b_window, GLFW_KEY_DOWN) == GLFW_PRESS)
+        b_camera_pitch -= turnAmount;
+
+    b_camera_pitch = std::clamp(b_camera_pitch, -89.0f, 89.0f);
+
+    glm::vec3 direction;
+    direction.x = cos(glm::radians(b_camera_yaw)) * cos(glm::radians(b_camera_pitch));
+    direction.y = sin(glm::radians(b_camera_pitch));
+    direction.z = sin(glm::radians(b_camera_yaw)) * cos(glm::radians(b_camera_pitch));
+    b_camera.set_direction(glm::normalize(direction));
+    b_camera.update_view_matrix();
+}
