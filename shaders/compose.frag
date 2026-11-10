@@ -134,7 +134,7 @@ void main()
         lighting += albedo * light.colorIntensity.rgb * (light.colorIntensity.w * diffuse * attenuation * ao);
     }
 
-    float shadowVisibility = 1.0;
+    float shadowVisibility = 0.0;
     if (depth < 1.0)
     {
         vec3 viewPosition = (ubo.view * vec4(worldPosition, 1.0)).xyz;
@@ -143,8 +143,8 @@ void main()
     }
 
     // Only direct lighting is shadowed; ambient light remains visible.
-    vec3 ambient = albedo * (0.03 * ao);
-    vec3 shadedColor = ambient + (lighting - ambient) * shadowVisibility;
+    vec3 ambient = albedo * (0.003 * ao);
+    vec3 shadedColor = ambient + (lighting - ambient);
     vec4 reflection = texture(sampler2D(screenSpaceReflectionsRT, rtSampler1), inUV);
     outColor = vec4(mix(shadedColor, shadedColor.rgb, reflection.a), 1.0);
 }
