@@ -207,9 +207,26 @@ void Renderer::pick_physical_device(VkInstance b_instance, VkPhysicalDevice &b_p
             b_color_write_feature.colorWriteEnable && b_vertex_input_feature.vertexInputDynamicState &&
             b_dynamic_rendering_feature.dynamicRendering && b_eds3.extendedDynamicState3ColorBlendEnable &&
             b_buffer_device_address_feature.bufferDeviceAddress &&
+            b_descriptor_indexing_feature.runtimeDescriptorArray &&
+            b_descriptor_indexing_feature.descriptorBindingPartiallyBound &&
+            b_descriptor_indexing_feature.shaderStorageBufferArrayNonUniformIndexing &&
             b_descriptor_indexing_feature.shaderSampledImageArrayNonUniformIndexing &&
+            b_descriptor_indexing_feature.shaderStorageImageArrayNonUniformIndexing &&
+            b_descriptor_indexing_feature.descriptorBindingStorageBufferUpdateAfterBind &&
+            b_descriptor_indexing_feature.descriptorBindingSampledImageUpdateAfterBind &&
+            b_descriptor_indexing_feature.descriptorBindingStorageImageUpdateAfterBind &&
             b_device_features2.features.samplerAnisotropy)
         {
+            // Enable the supported descriptor-indexing features in the existing feature chain.
+            b_descriptor_indexing_feature.runtimeDescriptorArray = VK_TRUE;
+            b_descriptor_indexing_feature.descriptorBindingPartiallyBound = VK_TRUE;
+            b_descriptor_indexing_feature.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
+            b_descriptor_indexing_feature.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+            b_descriptor_indexing_feature.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
+            b_descriptor_indexing_feature.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+            b_descriptor_indexing_feature.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            b_descriptor_indexing_feature.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+
             b_physical_device = b_device;
             spdlog::info("Using GPU: {}", deviceProperties.deviceName);
             return;
@@ -242,7 +259,6 @@ void Renderer::create_logical_device(VkPhysicalDevice b_physical_device, VkDevic
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-
     createInfo.queueCreateInfoCount = queueCount;
     createInfo.pQueueCreateInfos = queueCreateInfos;
     createInfo.enabledExtensionCount = DEVICE_EXTENSION_COUNT;
