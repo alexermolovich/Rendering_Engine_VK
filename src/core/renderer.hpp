@@ -106,6 +106,7 @@ class Renderer
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT b_vertex_input_feature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT,
         .pNext = &b_dynamic_rendering_feature};
+
     VkPhysicalDeviceFeatures2 b_device_features2 = {};
     VkPhysicalDevice b_physical_device = VK_NULL_HANDLE;
     VkDevice b_device = VK_NULL_HANDLE;
