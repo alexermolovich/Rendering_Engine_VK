@@ -218,7 +218,7 @@ void main()
     } else {
         finalUv.x += finalOffset * stepLength;
     }
-
+    
     // Read the color at the new UV coordinates, and use it.
     vec3 finalColor = sample_screen(finalUv);
     outColor = vec4(finalColor, 1.0);

@@ -79,7 +79,7 @@ float sampleCascadeShadow(vec3 worldPosition, uint cascadeIndex)
     }
 
     ivec3 shadowSize    = textureSize(sampler2DArray(shadowCascadeDepthRT, rtSampler1), 0);
-    vec2  texelSize      = 1.0 / vec2(shadowSize.xy);
+    vec2  texelSize     = 1.0 / vec2(shadowSize.xy);
     float bias          = max(shadowGen.shadow.bias.x, 0.0005);
     float visibility    = 0.0;
 

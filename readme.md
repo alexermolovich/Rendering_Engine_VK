@@ -1,7 +1,3 @@
-# Renderer
-
-The original Vulkan passes now live in `src/core/`, and `src/demo/main.cpp` initializes and runs `Renderer`.
-
 ## Roadmap
 
 ## Implemented Techniques
