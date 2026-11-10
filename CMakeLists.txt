@@ -9,13 +9,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Vulkan REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(glfw3 REQUIRED)
+find_package(meshoptimizer CONFIG REQUIRED)
 find_package(Threads REQUIRED)
-find_package(spdlog CONFIG QUIET)
+add_subdirectory(external/spdlog)
 
 set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "Build tinygltf example" FORCE)
 set(TINYGLTF_INSTALL OFF CACHE BOOL "Install tinygltf" FORCE)
 add_subdirectory(external/tinygltf)
-add_subdirectory(external/meshoptimizer)
 set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy Profiler")
 add_subdirectory(external/tracy)
 
@@ -37,7 +37,7 @@ target_link_libraries(renderer_core PUBLIC
     spdlog::spdlog
     Threads::Threads
     Tracy::TracyClient
-    PRIVATE meshoptimizer
+    PRIVATE meshoptimizer::meshoptimizer
 )
 # Resolve runtime files independently of the executable's working directory.
 target_compile_definitions(renderer_core PRIVATE

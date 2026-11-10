@@ -8,7 +8,7 @@
 #include <fstream>
 #include <glm/gtc/type_ptr.hpp>
 #include <iterator>
-#include <meshoptimizer/src/meshoptimizer.h>
+#include <meshoptimizer.h>
 #include <random>
 #include <stb_image.h>
 
