@@ -474,6 +474,19 @@ void Renderer::init_rendering_tecniques()
 
     /* cascade filtering resources */
     {
+        for (uint32_t i = 0; i < MAX_SHADOW_CASCADES; ++i)
+        {
+            create_buffer(b_t_filtered_triangles_cascade_shadows[i], b_model_gltf.indexBufferVk->size,
+                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                              VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            create_buffer(b_t_filter_indirect_args_cascade_shadows[i], sizeof(VkDrawIndexedIndirectCommand),
+                          VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        }
+
         load_shader(b_shader_cascade_shadow_mapping_filtering, nullptr, nullptr, "shaders/filtering_cascade.comp.spv");
         if (!b_t_filtering_pipeline_cascade_shadow_mapping)
             b_t_filtering_pipeline_cascade_shadow_mapping = add_pipeline(P::compute, F::cascade_filtering);
@@ -665,8 +678,10 @@ void Renderer::init_rendering_tecniques()
             add_render_target(b_device, b_physical_device, &shadow, &b_shadow_render_targets.cascadeDepth);
             add_shadow_cascade_layer_views();
         }
+
         require(has_shadow_render_targets(), "Shadow render targets were not created correctly");
         update_shadow_generation_data(true);
+
         for (uint32_t frame = 0; frame < FRAMES_IN_FLIGHT; ++frame)
         {
             if (!b_shadow_gen_buffer[frame])
