@@ -109,6 +109,17 @@ cmake --build build -j
 
 The build creates `vkml` and compiles shaders into `build/shaders/*.spv`.
 
+For WSL and VS Code, use the shared configure and build presets:
+
+```bash
+cmake --preset wsl-linux-debug
+cmake --build --preset wsl-linux-debug
+./out/build/wsl-linux-debug/vkml
+```
+
+VS Code's default **Build Renderer** task configures this preset before building.
+The debugger and C++ compile commands use the same `out/build/wsl-linux-debug` directory.
+
 ### Run
 
 The executable can be launched from any working directory. For example, from the repository root:

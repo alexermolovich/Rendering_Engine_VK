@@ -2,21 +2,36 @@
     "tasks": [
         {
             "type": "process",
-            "label": "Build Renderer",
+            "label": "Configure Renderer",
             "command": "cmake",
             "args": [
-                "--build",
-                "${workspaceFolder}/build",
-                "--target",
-                "vkml",
-                "-j",
-                "4"
+                "--preset",
+                "wsl-linux-debug"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": "$gcc",
-            "group": "build",
+            "detail": "Configures the renderer using the WSL Linux Debug preset."
+        },
+        {
+            "type": "process",
+            "label": "Build Renderer",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "--preset",
+                "wsl-linux-debug"
+            ],
+            "dependsOn": "Configure Renderer",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": "$gcc",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
             "detail": "Builds the renderer and its shaders through CMake."
         }
     ],
