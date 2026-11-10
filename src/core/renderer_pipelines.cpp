@@ -11,6 +11,7 @@
 #include <meshoptimizer.h>
 #include <random>
 #include <stb_image.h>
+#include <vulkan/vulkan_core.h>
 
 /* Add descriptor sets. */
 void Renderer::add_descriptor_sets()
@@ -359,9 +360,9 @@ void Renderer::init_rendering_tecniques()
     using P = PipelineType;
 
     /* shared resource creation helpers */
-    auto load_shader = [this](Shader *&shader, const char *vertex, const char *fragment,
-                              const char *compute) {
-        if (shader)
+    auto load_shader = [this](Shader *&shader, const char *vertex, const char *fragment, const char *compute) 
+    {
+        if (shader != VK_NULL_HANDLE)
             return;
         auto *slot = std::find_if(std::begin(b_shaders), std::end(b_shaders), [](const Shader &resource) {
             return !resource.vert && !resource.frag && !resource.geom && !resource.comp;
@@ -375,8 +376,9 @@ void Renderer::init_rendering_tecniques()
         if (compute)
             load_shader_code(*shader, VK_SHADER_STAGE_COMPUTE_BIT, compute);
     };
+    
     auto color_target = [this](RenderTarget *&target, VkFormat format, const char *name) {
-        if (target)
+        if (target != VK_NULL_HANDLE)
             return;
         RenderTargetDesc desc;
         desc.width = b_settings.width;
@@ -385,9 +387,10 @@ void Renderer::init_rendering_tecniques()
         desc.pName = name;
         add_render_target(b_device, b_physical_device, &desc, &target);
     };
+   
     auto create_buffer = [this](Buffer *&buffer, VkDeviceSize size, VkBufferUsageFlags usage,
                                 VkMemoryPropertyFlags memory) {
-        if (buffer)
+        if (buffer != VK_NULL_HANDLE)
             return;
         BufferDesc desc;
         desc.size = size;
@@ -399,7 +402,7 @@ void Renderer::init_rendering_tecniques()
     /* shared pipeline state */
     VkPipelineMultisampleStateCreateInfo multisampleState = {};
     multisampleState.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // Or match your main pass
+    multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // 
     multisampleState.sampleShadingEnable = VK_FALSE;
     multisampleState.minSampleShading = 1.0f;
     multisampleState.pSampleMask = nullptr;
@@ -424,17 +427,22 @@ void Renderer::init_rendering_tecniques()
     /* triangle filtering resources */
     {
         require(b_model_gltf.indexBufferVk, "Scene geometry is required for triangle filtering");
+      
         create_buffer(b_t_filtered_triangles, b_model_gltf.indexBufferVk->size,
                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                           VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        
         create_buffer(b_t_filter_indirect_args, sizeof(VkDrawIndexedIndirectCommand),
                       VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                           VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    
         load_shader(b_shader_computer_filtering, nullptr, nullptr, "shaders/filtering.comp.spv");
+        
         if (!b_t_filtering_pipeline)
             b_t_filtering_pipeline = add_pipeline(P::compute, F::triangle_filtering);
+       
         if (!b_t_filtering_pipeline->handle())
         {
             VkPipelineShaderStageCreateInfo shaderStageDesc{};
