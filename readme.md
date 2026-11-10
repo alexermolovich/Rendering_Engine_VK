@@ -71,8 +71,7 @@ The original Vulkan passes now live in `src/core/`, and `src/demo/main.cpp` init
 - C++20 compiler
 - Vulkan SDK or Vulkan development packages
 - `glslc`
-- Development packages for `glm` and `glfw3`
-- An installed static `meshoptimizer` library with its CMake package configuration
+- Development packages for `glm`, `glfw3`, and `meshoptimizer` (or vcpkg to install them)
 - `spdlog` sources in `external/spdlog` (built with `add_subdirectory`)
 - Vulkan-capable GPU and driver
 - Local `external/` assets and third-party folders (ignored by git)
@@ -89,6 +88,33 @@ This repo now treats `external/` as local-only. Populate it with the dependencie
 The build uses these existing local dependencies without modifying their source trees. `foundation/` has been removed; Camera is part of `renderer_core`.
 
 ### Configure And Build
+
+#### Windows (MSVC and vcpkg)
+
+Install Visual Studio's C++ build tools, the Vulkan SDK, and bootstrap
+[vcpkg](https://learn.microsoft.com/en-us/vcpkg/get_started/get-started).
+The repository's `vcpkg.json` lists `glm`, `glfw3`, and `meshoptimizer`;
+the vcpkg CMake toolchain installs these packages during configuration.
+The local dependencies under `external/` are still required.
+
+From PowerShell in the renderer repository root, assuming vcpkg is checked out
+beside this repository:
+
+```powershell
+$env:VCPKG_ROOT = (Resolve-Path ..\vcpkg).Path
+cmake --fresh -S . -B build_win `
+    "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+    -DVCPKG_TARGET_TRIPLET=x64-windows
+cmake --build build_win --config Debug --parallel
+.\build_win\Debug\vkml.exe
+```
+
+Set `VCPKG_ROOT` to your actual vcpkg checkout if it is elsewhere. `--fresh`
+requires CMake 3.24 or newer and clears a previously configured classic-mode
+vcpkg cache so CMake can enable manifest mode. With older CMake, use a new build
+directory instead. Later configurations can omit `--fresh`.
+
+#### Linux / WSL
 
 Install [meshoptimizer](https://github.com/zeux/meshoptimizer) separately as a static library
 if it is not already available. From a meshoptimizer source checkout:

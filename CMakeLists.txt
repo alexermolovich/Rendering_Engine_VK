@@ -1,4 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
+
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND NOT DEFINED ENV{CMAKE_TOOLCHAIN_FILE})
+    find_program(VCPKG_EXECUTABLE NAMES vcpkg HINTS "$ENV{VCPKG_ROOT}" "$ENV{USERPROFILE}/vcpkg")
+    if(VCPKG_EXECUTABLE)
+        get_filename_component(VCPKG_ROOT "${VCPKG_EXECUTABLE}" DIRECTORY)
+        set(CMAKE_TOOLCHAIN_FILE "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            CACHE FILEPATH "vcpkg toolchain")
+    endif()
+endif()
+
 project(VkRenderer LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
