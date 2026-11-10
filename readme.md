@@ -2,21 +2,6 @@
 
 The original Vulkan passes now live in `src/core/`, and `src/demo/main.cpp` initializes and runs `Renderer`.
 
-## Architecture
-
-- `Renderer` owns the window, Vulkan device, queues, resources, and pipeline map. `init()` creates each technique as a named instance. `DrawFrame()` explicitly orders every pass and its resource transitions.
-- `GraphicsPipeline` manages graphics and compute handles. The map key hashes the pipeline type together with its supported `TechniqueFlags`, including depth buffering and FXAA.
-- Each `RenderingTechnique` implements `draw(CommandBuffer&)` and holds its supporting pipeline and identifying flag. The existing order is cascade filtering, camera filtering, shadow depth, G-buffer, SSAO, SSAO blur, reflections, composition, and FXAA.
-- `Buffer`, `Image`, `RenderTarget`, `Shader`, `Sampler`, and `CommandBuffer` require explicit `destroy()` calls. Their destructors log and throw `std::logic_error` if a Vulkan object remains live. They are never responsible for releasing Vulkan objects during destruction. Destroy live wrappers before C++ deletion; an exception during stack unwinding cannot be recovered safely.
-- Resource creation rolls back failed Vulkan allocations. `Renderer::shutdown()` waits for pending preparation and device work, then releases resources in dependency order. It also handles partial initialization and repeated calls.
-- `FramePreparationQueue` prepares copied camera and lighting snapshots asynchronously. Its bounded FIFO preserves frame order and propagates worker exceptions. GLFW input, command recording, submission, and FIFO presentation stay on the main thread.
-- Shared offscreen targets and filtering output are synchronized between submissions. Indirect counts reset in the command buffer, and presentation semaphores belong to swapchain images. Swapchain recreation rebuilds targets and updates descriptors.
-- `BufferType` identifies uniform or storage data; `BufferUsage` identifies vertex, index, rendering, compute, and staging roles. Existing Vulkan usage flags remain available for allocation.
-
-Classes use PascalCase, functions and source filenames use snake_case, and private fields start with `b_`. `DrawFrame` keeps the name explicitly requested in the architecture specification. CMake's required filenames (`CMakeLists.txt`, `CMakePresets.json`, and `CMakeSettings.json`) retain their tool-defined spelling.
-
-The shader algorithms and your composition edit are preserved. The existing SSAO blur shader is still a placeholder; the quality work below remains separate from this cleanup.
-
 ## Roadmap
 
 ## Implemented Techniques
@@ -114,14 +99,6 @@ cmake -S . -B build-static -DCMAKE_BUILD_TYPE=Release \
 cmake --build build-static --config Release -j
 cmake --install build-static --config Release
 ```
-
-The renderer uses `find_package(meshoptimizer CONFIG REQUIRED)` and links
-`meshoptimizer::meshoptimizer`. For an installation outside CMake's default search
-paths, add `-DCMAKE_PREFIX_PATH=/path/to/meshoptimizer-install` to the configure
-command below. If an existing build cached another installation, set
-`-Dmeshoptimizer_DIR=/path/to/meshoptimizer-install/lib/cmake/meshoptimizer`
-(adjust `lib` to your installation's library directory). Shared-only installations
-are rejected.
 
 From the renderer repository:
 
