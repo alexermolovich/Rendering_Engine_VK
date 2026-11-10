@@ -8,8 +8,6 @@ layout(set = 0, binding = 3) uniform texture2D gBufferAlbedoRT;
 layout(set = 0, binding = 4) uniform texture2D gBufferNormalSpecularRT;
 layout(set = 0, binding = 6) uniform sampler rtSampler1;
 layout(set = 0, binding = 11) uniform texture2DArray shadowCascadeDepthRT;
-layout(set = 0, binding = 13) uniform texture2D screenSpaceReflectionsRT;
-
 layout (location = 0) in vec2 inUV;
 layout (location = 0) out vec4 outColor;
 
@@ -31,7 +29,7 @@ layout(push_constant) uniform PushConstants {
     ComposePushConstants compose;
 } Lights;
 
-vec3 reconstruct_world_position(vec2 uv, float depth)
+vec3 reconstructWorldPosition(vec2 uv, float depth)
 {
     vec2 ndc = uv * 2.0 - 1.0;
     vec4 clipPosition = vec4(ndc, depth, 1.0);
@@ -39,7 +37,7 @@ vec3 reconstruct_world_position(vec2 uv, float depth)
     return worldPosition.xyz / worldPosition.w;
 }
 
-vec3 decode_normal_oct(vec2 encoded)
+vec3 decodeNormalOct(vec2 encoded)
 {
     vec2 f = encoded * 2.0 - 1.0;
     vec3 n = vec3(f, 1.0 - abs(f.x) - abs(f.y));
@@ -48,7 +46,7 @@ vec3 decode_normal_oct(vec2 encoded)
     return normalize(n);
 }
 
-uint select_cascade(float viewDepth)
+uint selectCascade(float viewDepth)
 {
     for (uint cascadeIndex = 0; cascadeIndex < uint(MAX_SHADOW_CASCADES); cascadeIndex++)
     {
@@ -61,9 +59,10 @@ uint select_cascade(float viewDepth)
     return uint(MAX_SHADOW_CASCADES - 1);
 }
 
-float sample_cascade_shadow(vec3 worldPosition, uint cascadeIndex)
+float sampleCascadeShadow(vec3 worldPosition, uint cascadeIndex)
 {
     vec4 shadowClip = shadowGen.shadow.cascades[cascadeIndex].viewProj * vec4(worldPosition, 1.0);
+
     if (shadowClip.w <= 0.0)
     {
         return 1.0;
@@ -72,15 +71,15 @@ float sample_cascade_shadow(vec3 worldPosition, uint cascadeIndex)
     vec3 shadowNdc = shadowClip.xyz / shadowClip.w;
     vec2 shadowUV = shadowNdc.xy * 0.5 + 0.5;
 
-    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 ||
-        shadowUV.y < 0.0 || shadowUV.y > 1.0 ||
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || 
+        shadowUV.y < 0.0 || shadowUV.y > 1.0 || 
         shadowNdc.z < 0.0 || shadowNdc.z > 1.0)
     {
         return 1.0;
     }
 
     ivec3 shadowSize    = textureSize(sampler2DArray(shadowCascadeDepthRT, rtSampler1), 0);
-    vec2 texelSize      = 1.0 / vec2(shadowSize.xy);
+    vec2  texelSize      = 1.0 / vec2(shadowSize.xy);
     float bias          = max(shadowGen.shadow.bias.x, 0.0005);
     float visibility    = 0.0;
 
@@ -110,8 +109,8 @@ void main()
         return;
     }
 
-    vec3 worldPosition = reconstruct_world_position(inUV, depth);
-    vec3 viewNormal = decode_normal_oct(texture(sampler2D(gBufferNormalSpecularRT, rtSampler1), inUV).rg);
+    vec3 worldPosition = reconstructWorldPosition(inUV, depth);
+    vec3 viewNormal = decodeNormalOct(texture(sampler2D(gBufferNormalSpecularRT, rtSampler1), inUV).rg);
     vec3 worldNormal = normalize(transpose(mat3(ubo.view)) * viewNormal);
 
     vec3 lighting = albedo * (0.03 * ao);
@@ -134,17 +133,15 @@ void main()
         lighting += albedo * light.colorIntensity.rgb * (light.colorIntensity.w * diffuse * attenuation * ao);
     }
 
-    float shadowVisibility = 0.0;
+    float shadowVisibility = 1.0;
     if (depth < 1.0)
     {
         vec3 viewPosition = (ubo.view * vec4(worldPosition, 1.0)).xyz;
-        uint cascadeIndex = select_cascade(-viewPosition.z);
-        shadowVisibility = sample_cascade_shadow(worldPosition, cascadeIndex);
+        uint cascadeIndex = selectCascade(-viewPosition.z);
+        shadowVisibility = sampleCascadeShadow(worldPosition, cascadeIndex);
     }
 
     // Only direct lighting is shadowed; ambient light remains visible.
-    vec3 ambient = albedo * (0.003 * ao);
-    vec3 shadedColor = ambient + (lighting - ambient);
-    vec4 reflection = texture(sampler2D(screenSpaceReflectionsRT, rtSampler1), inUV);
-    outColor = vec4(mix(shadedColor, shadedColor.rgb, reflection.a), 1.0);
+    vec3 ambient = albedo * (0.03 * ao);
+    outColor = vec4(ambient + (lighting - ambient) * shadowVisibility, 1.0);
 }
