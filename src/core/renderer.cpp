@@ -545,120 +545,146 @@ void Renderer::DrawFrame()
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
                              1, &previous_frame, 0, nullptr, 0, nullptr);
 
-        VkDrawIndexedIndirectCommand reset = {};
-        reset.instanceCount = 1;
-        vkCmdUpdateBuffer(cmd, b_t_filter_indirect_args->buffer, 0, sizeof(reset), &reset);
-        for (auto *args : b_t_filter_indirect_args_cascade_shadows)
-            if (args)
-                vkCmdUpdateBuffer(cmd, args->buffer, 0, sizeof(reset), &reset);
-        VkMemoryBarrier reset_ready = {};
-        reset_ready.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        reset_ready.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        reset_ready.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
-                             &reset_ready, 0, nullptr, 0, nullptr);
+        // Geometry filtering: reset indirect draws and filter triangles for the camera and shadow cascades.
+        {
+            VkDrawIndexedIndirectCommand reset = {};
+            reset.instanceCount = 1;
+            vkCmdUpdateBuffer(cmd, b_t_filter_indirect_args->buffer, 0, sizeof(reset), &reset);
+            for (auto *args : b_t_filter_indirect_args_cascade_shadows)
+                if (args)
+                    vkCmdUpdateBuffer(cmd, args->buffer, 0, sizeof(reset), &reset);
+            VkMemoryBarrier reset_ready = {};
+            reset_ready.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            reset_ready.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            reset_ready.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                                 &reset_ready, 0, nullptr, 0, nullptr);
 
-        b_cascade_filtering_technique.draw(command_buffer);
-        b_triangle_filtering_technique.draw(command_buffer);
+            b_cascade_filtering_technique.draw(command_buffer);
+            b_triangle_filtering_technique.draw(command_buffer);
 
-        VkMemoryBarrier filtered_ready = {};
-        filtered_ready.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        filtered_ready.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        filtered_ready.dstAccessMask = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 1,
-                             &filtered_ready, 0, nullptr, 0, nullptr);
+            VkMemoryBarrier filtered_ready = {};
+            filtered_ready.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            filtered_ready.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            filtered_ready.dstAccessMask = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 1,
+                                 &filtered_ready, 0, nullptr, 0, nullptr);
+        }
 
-        transition_image(cmd, *b_shadow_render_targets.cascadeDepth, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-        b_shadow_depth_technique.draw(command_buffer);
-        transition_image(cmd, *b_shadow_render_targets.cascadeDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                         VK_ACCESS_SHADER_READ_BIT);
+        // Shadow depth: render the shadow cascades and make their depth available for lighting.
+        {
+            transition_image(cmd, *b_shadow_render_targets.cascadeDepth, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            b_shadow_depth_technique.draw(command_buffer);
+            transition_image(cmd, *b_shadow_render_targets.cascadeDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                             VK_ACCESS_SHADER_READ_BIT);
+        }
 
-        transition_image(cmd, *b_g_buffer_albedo_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-        transition_image(cmd, *b_g_buffer_normal_specular_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-        transition_image(cmd, *b_depth_buffer_rt, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-        b_g_buffer_technique.draw(command_buffer);
-        transition_image(cmd, *b_g_buffer_albedo_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-        transition_image(cmd, *b_g_buffer_normal_specular_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-        transition_image(cmd, *b_depth_buffer_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                         VK_ACCESS_SHADER_READ_BIT);
+        // G-buffer: record surface color, normals, specular data, and depth for later passes.
+        {
+            transition_image(cmd, *b_g_buffer_albedo_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            transition_image(cmd, *b_g_buffer_normal_specular_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            transition_image(cmd, *b_depth_buffer_rt, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            b_g_buffer_technique.draw(command_buffer);
+            transition_image(cmd, *b_g_buffer_albedo_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+            transition_image(cmd, *b_g_buffer_normal_specular_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+            transition_image(cmd, *b_depth_buffer_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                             VK_ACCESS_SHADER_READ_BIT);
+        }
 
-        transition_image(cmd, *b_ssao_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_SHADER_READ_BIT,
-                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-        b_ssao_technique.draw(command_buffer);
-        transition_image(cmd, *b_ssao_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-        transition_image(cmd, *b_ssao_blur_rt, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
-                         VK_ACCESS_SHADER_WRITE_BIT);
-        b_ssao_blur_technique.draw(command_buffer);
-        transition_image(cmd, *b_ssao_blur_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        // SSAO: estimate ambient occlusion from the scene depth and normals.
+        {
+            transition_image(cmd, *b_ssao_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_SHADER_READ_BIT,
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            b_ssao_technique.draw(command_buffer);
+            transition_image(cmd, *b_ssao_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        }
 
-        transition_image(cmd, *b_screen_space_reflections_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-        b_reflections_technique.draw(command_buffer);
-        transition_image(cmd, *b_screen_space_reflections_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-        transition_image(cmd, *b_compose_image_post_processing_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-        b_compose_technique.draw(command_buffer);
-        transition_image(cmd, *b_compose_image_post_processing_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        // SSAO blur: run the compute blur pass and prepare its output for sampling.
+        {
+            transition_image(cmd, *b_ssao_blur_rt, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                             VK_ACCESS_SHADER_WRITE_BIT);
+            b_ssao_blur_technique.draw(command_buffer);
+            transition_image(cmd, *b_ssao_blur_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        }
 
-        VkImageMemoryBarrier swapchain_barrier = {};
-        swapchain_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        swapchain_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        swapchain_barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        swapchain_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        swapchain_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        swapchain_barrier.image = b_swapchain_images[b_image_index];
-        swapchain_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        swapchain_barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                             &swapchain_barrier);
-        b_swapchain_image_layouts[b_image_index] = swapchain_barrier.newLayout;
-        b_fxaa_technique.draw(command_buffer);
-        swapchain_barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        swapchain_barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        swapchain_barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        swapchain_barrier.dstAccessMask = 0;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                             &swapchain_barrier);
-        b_swapchain_image_layouts[b_image_index] = swapchain_barrier.newLayout;
+        // Screen-space reflections: generate reflections from the visible scene data.
+        {
+            transition_image(cmd, *b_screen_space_reflections_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            b_reflections_technique.draw(command_buffer);
+            transition_image(cmd, *b_screen_space_reflections_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        }
+
+        // Composition: combine surface shading, shadows, ambient occlusion, and reflections.
+        {
+            transition_image(cmd, *b_compose_image_post_processing_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            b_compose_technique.draw(command_buffer);
+            transition_image(cmd, *b_compose_image_post_processing_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        }
+
+        // FXAA: anti-alias the composed image into the swapchain and prepare it for presentation.
+        {
+            VkImageMemoryBarrier swapchain_barrier = {};
+            swapchain_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            swapchain_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            swapchain_barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            swapchain_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            swapchain_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            swapchain_barrier.image = b_swapchain_images[b_image_index];
+            swapchain_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            swapchain_barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                                 &swapchain_barrier);
+            b_swapchain_image_layouts[b_image_index] = swapchain_barrier.newLayout;
+            b_fxaa_technique.draw(command_buffer);
+            swapchain_barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            swapchain_barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            swapchain_barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            swapchain_barrier.dstAccessMask = 0;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                                 &swapchain_barrier);
+            b_swapchain_image_layouts[b_image_index] = swapchain_barrier.newLayout;
+        }
     }
     TracyVkCollect(b_tracy_gpu_context, cmd);
     VK_CHECK(vkEndCommandBuffer(cmd));
