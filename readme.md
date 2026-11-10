@@ -87,7 +87,8 @@ The shader algorithms and your composition edit are preserved. The existing SSAO
 - Vulkan SDK or Vulkan development packages
 - `glslc`
 - Development packages for `glm` and `glfw3`
-- `spdlog` (CMake uses an installed package or fetches pinned v1.15.3 into the build directory)
+- An installed static `meshoptimizer` library with its CMake package configuration
+- `spdlog` sources in `external/spdlog` (built with `add_subdirectory`)
 - Vulkan-capable GPU and driver
 - Local `external/` assets and third-party folders (ignored by git)
 
@@ -97,12 +98,32 @@ This repo now treats `external/` as local-only. Populate it with the dependencie
 
 - `external/tracy`
 - `external/tinygltf`
-- `external/meshoptimizer`
+- `external/spdlog`
 - `external/gltf-sample-assets` (Sponza is loaded from this tree)
 
 The build uses these existing local dependencies without modifying their source trees. `foundation/` has been removed; Camera is part of `renderer_core`.
 
 ### Configure And Build
+
+Install [meshoptimizer](https://github.com/zeux/meshoptimizer) separately as a static library
+if it is not already available. From a meshoptimizer source checkout:
+
+```bash
+cmake -S . -B build-static -DCMAKE_BUILD_TYPE=Release \
+    -DMESHOPT_BUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/path/to/meshoptimizer-install
+cmake --build build-static --config Release -j
+cmake --install build-static --config Release
+```
+
+The renderer uses `find_package(meshoptimizer CONFIG REQUIRED)` and links
+`meshoptimizer::meshoptimizer`. For an installation outside CMake's default search
+paths, add `-DCMAKE_PREFIX_PATH=/path/to/meshoptimizer-install` to the configure
+command below. If an existing build cached another installation, set
+`-Dmeshoptimizer_DIR=/path/to/meshoptimizer-install/lib/cmake/meshoptimizer`
+(adjust `lib` to your installation's library directory). Shared-only installations
+are rejected.
+
+From the renderer repository:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
