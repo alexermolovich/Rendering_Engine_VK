@@ -498,10 +498,16 @@ void Renderer::transition_image(VkCommandBuffer cmd, RenderTarget &target, VkIma
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = target.image;
-    barrier.subresourceRange = {
-        static_cast<VkImageAspectFlags>(is_depth_format(target.format) ? VK_IMAGE_ASPECT_DEPTH_BIT
-                                                                    : VK_IMAGE_ASPECT_COLOR_BIT),
-        0, target.mipLevels, 0, target.arraySize};
+#ifdef _WIN32
+    barrier.subresourceRange = {static_cast<VkImageAspectFlags>(
+                                   is_depth_format(target.format) ? VK_IMAGE_ASPECT_DEPTH_BIT
+                                                                  : VK_IMAGE_ASPECT_COLOR_BIT),
+                                0, target.mipLevels, 0, target.arraySize};
+#else
+    barrier.subresourceRange = {is_depth_format(target.format) ? VK_IMAGE_ASPECT_DEPTH_BIT
+                                                               : VK_IMAGE_ASPECT_COLOR_BIT,
+                                0, target.mipLevels, 0, target.arraySize};
+#endif
     barrier.srcAccessMask = target.currentLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : source_access;
     barrier.dstAccessMask = target_access;
     vkCmdPipelineBarrier(cmd, source_stage, target_stage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
