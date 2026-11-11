@@ -22,7 +22,8 @@ Renderer::Renderer()
       b_reflections_technique(*this),
       b_compose_technique(*this),
       b_fxaa_technique(*this),
-      b_ssao_blur_technique(*this)
+      b_ssao_blur_technique(*this),
+      b_skybox_rendering_technique(*this)
 {
 }
 
@@ -497,9 +498,10 @@ void Renderer::transition_image(VkCommandBuffer cmd, RenderTarget &target, VkIma
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = target.image;
-    barrier.subresourceRange = {is_depth_format(target.format) ? VK_IMAGE_ASPECT_DEPTH_BIT
-                                                               : VK_IMAGE_ASPECT_COLOR_BIT,
-                                0, target.mipLevels, 0, target.arraySize};
+    barrier.subresourceRange = {
+        static_cast<VkImageAspectFlags>(is_depth_format(target.format) ? VK_IMAGE_ASPECT_DEPTH_BIT
+                                                                    : VK_IMAGE_ASPECT_COLOR_BIT),
+        0, target.mipLevels, 0, target.arraySize};
     barrier.srcAccessMask = target.currentLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : source_access;
     barrier.dstAccessMask = target_access;
     vkCmdPipelineBarrier(cmd, source_stage, target_stage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
@@ -598,6 +600,17 @@ void Renderer::DrawFrame()
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                  VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 1,
                                  &filtered_ready, 0, nullptr, 0, nullptr);
+        }
+
+        // Skybox: store its fragment output for sampling in the following graphics passes.
+        {
+            transition_image(cmd, *b_skybox_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            b_skybox_rendering_technique.draw(command_buffer);
+            transition_image(cmd, *b_skybox_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         }
 
         // Shadow depth: render the shadow cascades and make their depth available for lighting.
@@ -807,6 +820,7 @@ void Renderer::destroy_render_targets()
     b_ssao_blur_rt = nullptr;
     b_screen_space_reflections_rt = nullptr;
     b_compose_image_post_processing_rt = nullptr;
+    b_skybox_rt = nullptr;
 }
 
 /* Presentation semaphores belong to swapchain images, not CPU frame slots. */
@@ -862,6 +876,7 @@ void Renderer::shutdown()
             shader.destroy(b_device);
         destroy_render_targets();
         b_model_gltf.destroy(b_device);
+        b_skybox_image.destroy(b_device);
         for (auto &image : b_images)
             image.destroy(b_device);
         for (auto &buffer : b_buffers)
@@ -955,6 +970,8 @@ void Renderer::shutdown()
     b_compose_image_post_processing_rt = nullptr;
     b_fxaa_pipeline = nullptr;
     b_fxaa_pass_shader = nullptr;
+    b_skybox_pipeline = nullptr;
+    b_skybox_pass_shader = nullptr;
     b_submitted_sequence = 0;
     b_frame_index = 0;
     b_image_index = 0;

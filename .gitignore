@@ -1,4 +1,5 @@
 /build/
+/build_win/
 /build-*/
 /build-release/
 /cmake-build-*/
@@ -38,3 +39,4 @@ external/**/.cache/
 /.codex/
 *.log
 /out/
+/vcpkg_installed/

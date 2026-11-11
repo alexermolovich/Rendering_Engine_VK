@@ -17,5 +17,15 @@
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         }
+    ],
+    "buildPresets": [
+        {
+            "name": "wsl-linux-debug",
+            "configurePreset": "wsl-linux-debug",
+            "targets": [
+                "vkml"
+            ],
+            "jobs": 4
+        }
     ]
 }

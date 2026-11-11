@@ -11,6 +11,7 @@
 #include <meshoptimizer.h>
 #include <random>
 #include <stb_image.h>
+#include <vulkan/vulkan_core.h>
 
 /* Add descriptor sets. */
 void Renderer::add_descriptor_sets()
@@ -24,7 +25,7 @@ void Renderer::add_descriptor_sets()
     VkDescriptorPoolSize poolSizes[] = {
         {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 3 * FRAMES_IN_FLIGHT + 1},
 
-        {.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = 9 + BISTRO_TEXTURE_COUNT},
+        {.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = 11 + BISTRO_TEXTURE_COUNT},
 
         {.type = VK_DESCRIPTOR_TYPE_SAMPLER, .descriptorCount = 3},
     };
@@ -137,6 +138,14 @@ void Renderer::add_descriptor_sets()
         persistentBinding[13].descriptorCount = 1;
         persistentBinding[13].stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
         persistentBinding[13].pImmutableSamplers = nullptr;
+        persistentBinding[14] = {
+            14, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1,
+            VK_SHADER_STAGE_FRAGMENT_BIT, nullptr
+        };
+        persistentBinding[15] = {
+            15, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1,
+            VK_SHADER_STAGE_ALL_GRAPHICS, nullptr
+        };
 
         VkDescriptorSetLayoutCreateInfo lPersistentDesc = {};
         lPersistentDesc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -348,6 +357,22 @@ void Renderer::prepare_persistent_descriptors()
     writePersistent[13].descriptorCount = 1;
     writePersistent[13].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     writePersistent[13].pImageInfo = &b_screen_space_reflections_rt->imageInfo;
+    writePersistent[14] = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = b_sets_persistent,
+        .dstBinding = 14,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .pImageInfo = &b_skybox_image.descInfo
+    };
+    writePersistent[15] = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = b_sets_persistent,
+        .dstBinding = 15,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .pImageInfo = &b_skybox_rt->imageInfo
+    };
 
     vkUpdateDescriptorSets(b_device, PERSISTENT_BINDING_COUNT, writePersistent, 0, nullptr);
 }
@@ -359,9 +384,9 @@ void Renderer::init_rendering_tecniques()
     using P = PipelineType;
 
     /* shared resource creation helpers */
-    auto load_shader = [this](Shader *&shader, const char *vertex, const char *fragment,
-                              const char *compute) {
-        if (shader)
+    auto load_shader = [this](Shader *&shader, const char *vertex, const char *fragment, const char *compute)
+    {
+        if (shader != VK_NULL_HANDLE)
             return;
         auto *slot = std::find_if(std::begin(b_shaders), std::end(b_shaders), [](const Shader &resource) {
             return !resource.vert && !resource.frag && !resource.geom && !resource.comp;
@@ -375,8 +400,9 @@ void Renderer::init_rendering_tecniques()
         if (compute)
             load_shader_code(*shader, VK_SHADER_STAGE_COMPUTE_BIT, compute);
     };
+
     auto color_target = [this](RenderTarget *&target, VkFormat format, const char *name) {
-        if (target)
+        if (target != VK_NULL_HANDLE)
             return;
         RenderTargetDesc desc;
         desc.width = b_settings.width;
@@ -385,9 +411,10 @@ void Renderer::init_rendering_tecniques()
         desc.pName = name;
         add_render_target(b_device, b_physical_device, &desc, &target);
     };
+
     auto create_buffer = [this](Buffer *&buffer, VkDeviceSize size, VkBufferUsageFlags usage,
                                 VkMemoryPropertyFlags memory) {
-        if (buffer)
+        if (buffer != VK_NULL_HANDLE)
             return;
         BufferDesc desc;
         desc.size = size;
@@ -399,7 +426,7 @@ void Renderer::init_rendering_tecniques()
     /* shared pipeline state */
     VkPipelineMultisampleStateCreateInfo multisampleState = {};
     multisampleState.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // Or match your main pass
+    multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; //
     multisampleState.sampleShadingEnable = VK_FALSE;
     multisampleState.minSampleShading = 1.0f;
     multisampleState.pSampleMask = nullptr;
@@ -424,17 +451,22 @@ void Renderer::init_rendering_tecniques()
     /* triangle filtering resources */
     {
         require(b_model_gltf.indexBufferVk, "Scene geometry is required for triangle filtering");
+
         create_buffer(b_t_filtered_triangles, b_model_gltf.indexBufferVk->size,
                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                           VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
         create_buffer(b_t_filter_indirect_args, sizeof(VkDrawIndexedIndirectCommand),
                       VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
         load_shader(b_shader_computer_filtering, nullptr, nullptr, "shaders/filtering.comp.spv");
+
         if (!b_t_filtering_pipeline)
             b_t_filtering_pipeline = add_pipeline(P::compute, F::triangle_filtering);
+
         if (!b_t_filtering_pipeline->handle())
         {
             VkPipelineShaderStageCreateInfo shaderStageDesc{};
@@ -466,6 +498,19 @@ void Renderer::init_rendering_tecniques()
 
     /* cascade filtering resources */
     {
+        for (uint32_t i = 0; i < MAX_SHADOW_CASCADES; ++i)
+        {
+            create_buffer(b_t_filtered_triangles_cascade_shadows[i], b_model_gltf.indexBufferVk->size,
+                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                              VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            create_buffer(b_t_filter_indirect_args_cascade_shadows[i], sizeof(VkDrawIndexedIndirectCommand),
+                          VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        }
+
         load_shader(b_shader_cascade_shadow_mapping_filtering, nullptr, nullptr, "shaders/filtering_cascade.comp.spv");
         if (!b_t_filtering_pipeline_cascade_shadow_mapping)
             b_t_filtering_pipeline_cascade_shadow_mapping = add_pipeline(P::compute, F::cascade_filtering);
@@ -657,8 +702,10 @@ void Renderer::init_rendering_tecniques()
             add_render_target(b_device, b_physical_device, &shadow, &b_shadow_render_targets.cascadeDepth);
             add_shadow_cascade_layer_views();
         }
+
         require(has_shadow_render_targets(), "Shadow render targets were not created correctly");
         update_shadow_generation_data(true);
+
         for (uint32_t frame = 0; frame < FRAMES_IN_FLIGHT; ++frame)
         {
             if (!b_shadow_gen_buffer[frame])
@@ -1217,6 +1264,110 @@ void Renderer::init_rendering_tecniques()
             fxaaPipelineDesc.flags = 0;
 
             b_fxaa_pipeline->create(b_device, fxaaPipelineDesc);
+        }
+    }
+    {
+        /* Skybox output for sampling in later passes. */
+        color_target(b_skybox_rt, VK_FORMAT_R16G16B16A16_SFLOAT, "SkyboxOutput");
+        load_shader(b_skybox_pass_shader, "shaders/fullscreen.vert.spv", "shaders/skybox.frag.spv", nullptr);
+
+        if (!b_skybox_pipeline)
+            b_skybox_pipeline = add_pipeline(P::graphics, F::skybox);
+
+        if (!b_skybox_pipeline->handle())
+        {
+            VkPipelineDepthStencilStateCreateInfo depthStencilState = {};
+            depthStencilState.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+            depthStencilState.depthTestEnable = VK_FALSE;
+            depthStencilState.depthWriteEnable = VK_FALSE;
+            depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+            depthStencilState.depthBoundsTestEnable = VK_FALSE;
+            depthStencilState.stencilTestEnable = VK_FALSE;
+
+            VkPipelineViewportStateCreateInfo viewportState = {};
+            viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+            viewportState.viewportCount = 1;
+            viewportState.pViewports = nullptr;
+            viewportState.scissorCount = 1;
+            viewportState.pScissors = nullptr;
+
+            VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = {};
+            inputAssemblyState.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+            inputAssemblyState.primitiveRestartEnable = VK_FALSE;
+            inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+            VkPipelineShaderStageCreateInfo shaderStageDesc[2] = {};
+            shaderStageDesc[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderStageDesc[0].pNext = nullptr;
+            shaderStageDesc[0].flags = 0;
+            shaderStageDesc[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+            shaderStageDesc[0].module = b_skybox_pass_shader->vert;
+            shaderStageDesc[0].pName = "main";
+            shaderStageDesc[0].pSpecializationInfo = nullptr;
+
+            shaderStageDesc[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            shaderStageDesc[1].pNext = nullptr;
+            shaderStageDesc[1].flags = 0;
+            shaderStageDesc[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            shaderStageDesc[1].module = b_skybox_pass_shader->frag;
+            shaderStageDesc[1].pName = "main";
+            shaderStageDesc[1].pSpecializationInfo = nullptr;
+
+            VkPipelineRenderingCreateInfo renderingInfo = {};
+            renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+            renderingInfo.colorAttachmentCount = 1;
+            renderingInfo.pColorAttachmentFormats = &b_skybox_rt->format;
+
+            VkDynamicState dynamicStates[] = {
+                VK_DYNAMIC_STATE_VIEWPORT,
+                VK_DYNAMIC_STATE_SCISSOR,
+                VK_DYNAMIC_STATE_COLOR_WRITE_ENABLE_EXT,
+            };
+
+            VkPipelineDynamicStateCreateInfo dynamicState = {};
+            dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+            dynamicState.dynamicStateCount = static_cast<uint32_t>(std::size(dynamicStates));
+            dynamicState.pDynamicStates = dynamicStates;
+
+            VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
+            vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+            vertexInputInfo.vertexBindingDescriptionCount = 0;
+            vertexInputInfo.vertexAttributeDescriptionCount = 0;
+
+            VkPipelineRasterizationStateCreateInfo rasterizationState = pRasterizationState;
+            rasterizationState.cullMode = VK_CULL_MODE_NONE;
+
+            VkPipelineColorBlendAttachmentState blendAttachment = {};
+            blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            blendAttachment.blendEnable = VK_FALSE;
+
+            VkPipelineColorBlendStateCreateInfo colorBlendState = {};
+            colorBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+            colorBlendState.attachmentCount = 1;
+            colorBlendState.pAttachments = &blendAttachment;
+            colorBlendState.logicOpEnable = VK_FALSE;
+
+            VkGraphicsPipelineCreateInfo fxaaPipelineDesc = {};
+            fxaaPipelineDesc.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+            fxaaPipelineDesc.pNext = &renderingInfo;
+            fxaaPipelineDesc.stageCount = 2;
+            fxaaPipelineDesc.pStages = shaderStageDesc;
+            fxaaPipelineDesc.pVertexInputState = &vertexInputInfo;
+            fxaaPipelineDesc.pInputAssemblyState = &inputAssemblyState;
+            fxaaPipelineDesc.pTessellationState = nullptr;
+            fxaaPipelineDesc.pViewportState = &viewportState;
+            fxaaPipelineDesc.pRasterizationState = &rasterizationState;
+            fxaaPipelineDesc.pMultisampleState = &multisampleState;
+            fxaaPipelineDesc.pDepthStencilState = &depthStencilState;
+            fxaaPipelineDesc.pColorBlendState = &colorBlendState;
+            fxaaPipelineDesc.pDynamicState = &dynamicState;
+            fxaaPipelineDesc.layout = b_pipeline_layout;
+            fxaaPipelineDesc.renderPass = VK_NULL_HANDLE;
+            fxaaPipelineDesc.subpass = 0;
+            fxaaPipelineDesc.flags = 0;
+
+            b_skybox_pipeline->create(b_device, fxaaPipelineDesc);
         }
     }
 
