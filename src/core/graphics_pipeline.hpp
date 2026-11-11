@@ -15,7 +15,9 @@ enum class TechniqueFlags : uint32_t
     ssao_blur = 1u << 6,
     reflections = 1u << 7,
     composition = 1u << 8,
-    fxaa = 1u << 9
+    fxaa = 1u << 9,
+    skybox = 1u << 10
+
 };
 
 enum class PipelineType : uint32_t

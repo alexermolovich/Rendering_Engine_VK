@@ -22,7 +22,8 @@ Renderer::Renderer()
       b_reflections_technique(*this),
       b_compose_technique(*this),
       b_fxaa_technique(*this),
-      b_ssao_blur_technique(*this)
+      b_ssao_blur_technique(*this),
+      b_skybox_rendering_technique(*this)
 {
 }
 
@@ -589,6 +590,17 @@ void Renderer::DrawFrame()
                                  &filtered_ready, 0, nullptr, 0, nullptr);
         }
 
+        // Skybox: store its fragment output for sampling in the following graphics passes.
+        {
+            transition_image(cmd, *b_skybox_rt, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            b_skybox_rendering_technique.draw(command_buffer);
+            transition_image(cmd, *b_skybox_rt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        }
+
         // Shadow depth: render the shadow cascades and make their depth available for lighting.
         {
             transition_image(cmd, *b_shadow_render_targets.cascadeDepth, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
@@ -782,6 +794,7 @@ void Renderer::destroy_render_targets()
     b_ssao_blur_rt = nullptr;
     b_screen_space_reflections_rt = nullptr;
     b_compose_image_post_processing_rt = nullptr;
+    b_skybox_rt = nullptr;
 }
 
 /* Presentation semaphores belong to swapchain images, not CPU frame slots. */
@@ -930,6 +943,8 @@ void Renderer::shutdown()
     b_compose_image_post_processing_rt = nullptr;
     b_fxaa_pipeline = nullptr;
     b_fxaa_pass_shader = nullptr;
+    b_skybox_pipeline = nullptr;
+    b_skybox_pass_shader = nullptr;
     b_submitted_sequence = 0;
     b_frame_index = 0;
     b_image_index = 0;

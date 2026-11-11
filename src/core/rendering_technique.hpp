@@ -108,3 +108,12 @@ class SsaoBlurTechnique final : public RenderingTechnique
     }
     void draw(CommandBuffer &command_buffer) override;
 };
+
+class SkyboxTechnique: public RenderingTechnique
+{
+  public:
+    explicit SkyboxTechnique(Renderer &renderer) : RenderingTechnique(renderer)
+    {
+    }
+    void draw(CommandBuffer &command_buffer) override;
+};

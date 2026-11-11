@@ -1,10 +1,19 @@
 cmake_minimum_required(VERSION 3.20)
 
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND NOT DEFINED ENV{CMAKE_TOOLCHAIN_FILE})
-    find_program(VCPKG_EXECUTABLE NAMES vcpkg HINTS "$ENV{VCPKG_ROOT}" "$ENV{USERPROFILE}/vcpkg")
-    if(VCPKG_EXECUTABLE)
-        get_filename_component(VCPKG_ROOT "${VCPKG_EXECUTABLE}" DIRECTORY)
-        set(CMAKE_TOOLCHAIN_FILE "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    find_file(VCPKG_TOOLCHAIN_FILE NAMES vcpkg.cmake
+        HINTS "$ENV{VCPKG_ROOT}" "$ENV{USERPROFILE}/vcpkg" "${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg"
+        PATH_SUFFIXES scripts/buildsystems
+        NO_DEFAULT_PATH)
+    if(NOT VCPKG_TOOLCHAIN_FILE)
+        find_program(VCPKG_EXECUTABLE NAMES vcpkg)
+        if(VCPKG_EXECUTABLE)
+            get_filename_component(VCPKG_ROOT "${VCPKG_EXECUTABLE}" DIRECTORY)
+            set(VCPKG_TOOLCHAIN_FILE "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+        endif()
+    endif()
+    if(VCPKG_TOOLCHAIN_FILE)
+        set(CMAKE_TOOLCHAIN_FILE "${VCPKG_TOOLCHAIN_FILE}"
             CACHE FILEPATH "vcpkg toolchain")
     endif()
 endif()
