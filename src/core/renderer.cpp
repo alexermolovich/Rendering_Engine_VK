@@ -265,7 +265,7 @@ void Renderer::create_logical_device(VkPhysicalDevice b_physical_device, VkDevic
     createInfo.enabledExtensionCount = DEVICE_EXTENSION_COUNT;
     createInfo.pNext = &b_device_features2;
     createInfo.ppEnabledExtensionNames = b_device_extensions;
-    createInfo.enabledLayerCount = VALIDATION_LAYER_COUNT;
+    //createInfo.enabledLayerCount = VALIDATION_LAYER_COUNT;
     //createInfo.ppEnabledLayerNames = b_validation_layers;
 
     if (vkCreateDevice(b_physical_device, &createInfo, nullptr, &b_device) != VK_SUCCESS)
@@ -353,8 +353,8 @@ void Renderer::vulkan_init()
         createInfo.pApplicationInfo = &appInfo;
         createInfo.enabledExtensionCount = b_extension_count;
         createInfo.ppEnabledExtensionNames = b_extensions;
-        createInfo.enabledLayerCount = VALIDATION_LAYER_COUNT;
-        createInfo.ppEnabledLayerNames = b_validation_layers;
+        //createInfo.enabledLayerCount = VALIDATION_LAYER_COUNT;
+        //createInfo.ppEnabledLayerNames = b_validation_layers;
         createInfo.pNext = &debugCreateInfo;
 
         if (vkCreateInstance(&createInfo, nullptr, &b_instance) != VK_SUCCESS)
