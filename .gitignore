@@ -17,7 +17,11 @@ Makefile
 compile_commands.json
 
 # Local third-party/vendor dependencies and assets.
-/external/
+
+/external/gltf-sample-assets  
+/external/spdlog
+/external/tinygltf
+/external/tracy
 
 # Library-specific generated artifacts under vendor directories.
 external/**/CMakeFiles/
