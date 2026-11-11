@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <glm/gtc/type_ptr.hpp>
+#include <memory>
 #include <meshoptimizer.h>
 #include <random>
 #include <stb_image.h>
@@ -97,6 +98,22 @@ void Renderer::init_sky_light()
     b_sky_light_uniform_data.lightColor = glm::vec3(1.0f);
     b_sky_light_uniform_data.lightDirection = normalize(glm::vec3(-1, -1, -1));
     b_sky_light_uniform_data.lightIntensity = 1.0f;
+}
+
+/* Load the skybox pixels through the existing staging-buffer upload. */
+void Renderer::load_skybox(const std::string &filename)
+{
+    int width = 0, height = 0, channels = 0;
+    std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> pixels(
+        stbi_load(filename.c_str(), &width, &height, &channels, STBI_rgb_alpha),
+        stbi_image_free);
+    if (!pixels)
+        throw std::runtime_error("Failed to load skybox: " + filename);
+
+    b_skybox_image.from_buffer(
+        pixels.get(), VkDeviceSize(width) * height * 4,
+        VK_FORMAT_R8G8B8A8_SRGB, width, height,
+        b_device, b_physical_device, b_graphics_queue, b_graphics_command_pool);
 }
 
 /* Load sponza. */
@@ -207,4 +224,6 @@ void Renderer::load_sponza()
     }
 
     b_vertex_buffer_address = 0;
+    // Replace this placeholder with your skybox image path.
+    load_skybox((std::filesystem::path(VKML_SOURCE_DIR) / "external/skybox_image_360.jpg").string());
 }

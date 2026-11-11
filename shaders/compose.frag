@@ -8,6 +8,7 @@ layout(set = 0, binding = 3) uniform texture2D gBufferAlbedoRT;
 layout(set = 0, binding = 4) uniform texture2D gBufferNormalSpecularRT;
 layout(set = 0, binding = 6) uniform sampler rtSampler1;
 layout(set = 0, binding = 11) uniform texture2DArray shadowCascadeDepthRT;
+layout(set = 0, binding = 15) uniform texture2D skyboxRT;
 layout (location = 0) in vec2 inUV;
 layout (location = 0) out vec4 outColor;
 
@@ -105,7 +106,7 @@ void main()
 
     if (depth >= 1.0)
     {
-        outColor = vec4(albedo, 1.0);
+        outColor = texture(sampler2D(skyboxRT, rtSampler1), inUV);
         return;
     }
 

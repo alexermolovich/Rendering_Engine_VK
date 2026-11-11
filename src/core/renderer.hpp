@@ -28,8 +28,8 @@
      TRIANGLE_FILTERING_BUFFER_COUNT + CASCADE_FILTERING_BUFFER_COUNT + SSAO_BUFFER_COUNT)
 #define RENDERER_TEXTURE_COUNT 2
 #define RENDERER_SAMPLER_COUNT 2
-#define RENDERER_SHADER_COUNT 9
-#define RENDERER_PIPELINE_COUNT 9
+#define RENDERER_SHADER_COUNT 10
+#define RENDERER_PIPELINE_COUNT 10
 
 /* rendering technique resource counts */
 #define G_BUFFER_RENDER_TARGET_COUNT 3
@@ -37,9 +37,10 @@
 #define SSAO_RENDER_TARGET_COUNT 2
 #define REFLECTIONS_RENDER_TARGET_COUNT 1
 #define COMPOSITION_RENDER_TARGET_COUNT 1
+#define SKYBOX_RENDER_TARGET_COUNT 1
 #define RENDERER_RENDER_TARGET_COUNT \
     (G_BUFFER_RENDER_TARGET_COUNT + SHADOW_RENDER_TARGET_COUNT + SSAO_RENDER_TARGET_COUNT + \
-     REFLECTIONS_RENDER_TARGET_COUNT + COMPOSITION_RENDER_TARGET_COUNT)
+     REFLECTIONS_RENDER_TARGET_COUNT + COMPOSITION_RENDER_TARGET_COUNT + SKYBOX_RENDER_TARGET_COUNT)
 
 /* Owns Vulkan state, explicit resource lifetime, and ordered presentation. */
 class Renderer
@@ -67,6 +68,7 @@ class Renderer
     friend class ComposeTechnique;
     friend class FxaaTechnique;
     friend class SsaoBlurTechnique;
+    friend class SkyboxTechnique;
 
     /* application and window state */
     AppSettings b_settings = {600, 800};
@@ -233,6 +235,12 @@ class Renderer
     GraphicsPipeline *b_fxaa_pipeline = nullptr;
     Shader *b_fxaa_pass_shader = nullptr;
 
+    /* skybox resources */
+    GraphicsPipeline *b_skybox_pipeline = nullptr;
+    Shader *b_skybox_pass_shader = nullptr;
+    Image b_skybox_image;
+    RenderTarget *b_skybox_rt = nullptr;
+
     /* rendering techniques */
     CascadeFilteringTechnique b_cascade_filtering_technique;
     TriangleFilteringTechnique b_triangle_filtering_technique;
@@ -243,6 +251,7 @@ class Renderer
     ComposeTechnique b_compose_technique;
     FxaaTechnique b_fxaa_technique;
     SsaoBlurTechnique b_ssao_blur_technique;
+    SkyboxTechnique b_skybox_rendering_technique;
 
     /* camera updates */
     void update_camera();
@@ -317,6 +326,7 @@ class Renderer
     void setup_ubo();
     void init_sky_light();
     void load_sponza();
+    void load_skybox(const std::string &filename);
 
     /* shader loading */
     void load_shader_code(Shader &shader, VkShaderStageFlagBits stage, const std::string &filepath);
