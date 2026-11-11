@@ -9,7 +9,7 @@
             "defines": [],
             "cStandard": "c17",
             "compileCommands": [
-                "${workspaceFolder}/build/compile_commands.json"
+                "${workspaceFolder}/out/build/wsl-linux-debug/compile_commands.json"
             ]
         }
     ],

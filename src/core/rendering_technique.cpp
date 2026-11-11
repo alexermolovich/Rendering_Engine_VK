@@ -1,3 +1,4 @@
+#include "core/rendering_technique.hpp"
 #include "renderer.hpp"
 #include "vulkan_check.hpp"
 #include <algorithm>
@@ -552,4 +553,47 @@ void SsaoBlurTechnique::draw(CommandBuffer &command_buffer)
                             0, nullptr);
     vkCmdDispatch(cmd, (b_renderer.b_app_settings->width + 7) / 8,
                   (b_renderer.b_app_settings->height + 7) / 8, 1);
+}
+
+/* Skybox rendering pass*/
+void SkyboxTechnique::draw(CommandBuffer &command_buffer)
+{
+    auto &target = *b_renderer.b_skybox_rt;
+    assert(target.currentLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    assert(b_renderer.b_skybox_image.currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    VkCommandBuffer cmd = command_buffer.handle();
+    VkViewport viewport = {};
+    viewport.width = static_cast<float>(target.width);
+    viewport.height = static_cast<float>(target.height);
+    viewport.maxDepth = 1.0f;
+    VkRect2D scissor = {{0, 0}, {target.width, target.height}};
+
+    VkRenderingAttachmentInfo attachment = {};
+    attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    attachment.imageView = target.imageView;
+    attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.clearValue = target.clearValue;
+
+    VkRenderingInfo renderingInfo = {};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    renderingInfo.renderArea = scissor;
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &attachment;
+
+    vkCmdBeginRendering(cmd, &renderingInfo);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b_renderer.b_skybox_pipeline->handle());
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    VkBool32 colorWrite = VK_TRUE;
+    b_renderer.b_pfn_cmd_set_color_write_enable_ext(cmd, 1, &colorWrite);
+    VkDescriptorSet sets[2] = {b_renderer.b_sets_persistent,
+                               b_renderer.b_sets_per_frame[b_renderer.b_frame_index]};
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, b_renderer.b_pipeline_layout, 0, 2, sets,
+                            0, nullptr);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRendering(cmd);
 }

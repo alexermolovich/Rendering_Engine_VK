@@ -1,22 +1,3 @@
-# Renderer
-
-The original Vulkan passes now live in `src/core/`, and `src/demo/main.cpp` initializes and runs `Renderer`.
-
-## Architecture
-
-- `Renderer` owns the window, Vulkan device, queues, resources, and pipeline map. `init()` creates each technique as a named instance. `DrawFrame()` explicitly orders every pass and its resource transitions.
-- `GraphicsPipeline` manages graphics and compute handles. The map key hashes the pipeline type together with its supported `TechniqueFlags`, including depth buffering and FXAA.
-- Each `RenderingTechnique` implements `draw(CommandBuffer&)` and holds its supporting pipeline and identifying flag. The existing order is cascade filtering, camera filtering, shadow depth, G-buffer, SSAO, SSAO blur, reflections, composition, and FXAA.
-- `Buffer`, `Image`, `RenderTarget`, `Shader`, `Sampler`, and `CommandBuffer` require explicit `destroy()` calls. Their destructors log and throw `std::logic_error` if a Vulkan object remains live. They are never responsible for releasing Vulkan objects during destruction. Destroy live wrappers before C++ deletion; an exception during stack unwinding cannot be recovered safely.
-- Resource creation rolls back failed Vulkan allocations. `Renderer::shutdown()` waits for pending preparation and device work, then releases resources in dependency order. It also handles partial initialization and repeated calls.
-- `FramePreparationQueue` prepares copied camera and lighting snapshots asynchronously. Its bounded FIFO preserves frame order and propagates worker exceptions. GLFW input, command recording, submission, and FIFO presentation stay on the main thread.
-- Shared offscreen targets and filtering output are synchronized between submissions. Indirect counts reset in the command buffer, and presentation semaphores belong to swapchain images. Swapchain recreation rebuilds targets and updates descriptors.
-- `BufferType` identifies uniform or storage data; `BufferUsage` identifies vertex, index, rendering, compute, and staging roles. Existing Vulkan usage flags remain available for allocation.
-
-Classes use PascalCase, functions and source filenames use snake_case, and private fields start with `b_`. `DrawFrame` keeps the name explicitly requested in the architecture specification. CMake's required filenames (`CMakeLists.txt`, `CMakePresets.json`, and `CMakeSettings.json`) retain their tool-defined spelling.
-
-The shader algorithms and your composition edit are preserved. The existing SSAO blur shader is still a placeholder; the quality work below remains separate from this cleanup.
-
 ## Roadmap
 
 ## Implemented Techniques
@@ -86,8 +67,7 @@ The shader algorithms and your composition edit are preserved. The existing SSAO
 - C++20 compiler
 - Vulkan SDK or Vulkan development packages
 - `glslc`
-- Development packages for `glm` and `glfw3`
-- An installed static `meshoptimizer` library with its CMake package configuration
+- Development packages for `glm`, `glfw3`, and `meshoptimizer` (or vcpkg to install them)
 - `spdlog` sources in `external/spdlog` (built with `add_subdirectory`)
 - Vulkan-capable GPU and driver
 - Local `external/` assets and third-party folders (ignored by git)
@@ -105,6 +85,33 @@ The build uses these existing local dependencies without modifying their source 
 
 ### Configure And Build
 
+#### Windows (MSVC and vcpkg)
+
+Install Visual Studio's C++ build tools, the Vulkan SDK, and bootstrap
+[vcpkg](https://learn.microsoft.com/en-us/vcpkg/get_started/get-started).
+The repository's `vcpkg.json` lists `glm`, `glfw3`, and `meshoptimizer`;
+the vcpkg CMake toolchain installs these packages during configuration.
+The local dependencies under `external/` are still required.
+
+From PowerShell in the renderer repository root, assuming vcpkg is checked out
+beside this repository:
+
+```powershell
+$env:VCPKG_ROOT = (Resolve-Path ..\vcpkg).Path
+cmake --fresh -S . -B build_win `
+    "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+    -DVCPKG_TARGET_TRIPLET=x64-windows
+cmake --build build_win --config Debug --parallel
+.\build_win\Debug\vkml.exe
+```
+
+Set `VCPKG_ROOT` to your actual vcpkg checkout if it is elsewhere. `--fresh`
+requires CMake 3.24 or newer and clears a previously configured classic-mode
+vcpkg cache so CMake can enable manifest mode. With older CMake, use a new build
+directory instead. Later configurations can omit `--fresh`.
+
+#### Linux / WSL
+
 Install [meshoptimizer](https://github.com/zeux/meshoptimizer) separately as a static library
 if it is not already available. From a meshoptimizer source checkout:
 
@@ -115,14 +122,6 @@ cmake --build build-static --config Release -j
 cmake --install build-static --config Release
 ```
 
-The renderer uses `find_package(meshoptimizer CONFIG REQUIRED)` and links
-`meshoptimizer::meshoptimizer`. For an installation outside CMake's default search
-paths, add `-DCMAKE_PREFIX_PATH=/path/to/meshoptimizer-install` to the configure
-command below. If an existing build cached another installation, set
-`-Dmeshoptimizer_DIR=/path/to/meshoptimizer-install/lib/cmake/meshoptimizer`
-(adjust `lib` to your installation's library directory). Shared-only installations
-are rejected.
-
 From the renderer repository:
 
 ```bash
@@ -131,6 +130,17 @@ cmake --build build -j
 ```
 
 The build creates `vkml` and compiles shaders into `build/shaders/*.spv`.
+
+For WSL and VS Code, use the shared configure and build presets:
+
+```bash
+cmake --preset wsl-linux-debug
+cmake --build --preset wsl-linux-debug
+./out/build/wsl-linux-debug/vkml
+```
+
+VS Code's default **Build Renderer** task configures this preset before building.
+The debugger and C++ compile commands use the same `out/build/wsl-linux-debug` directory.
 
 ### Run
 
