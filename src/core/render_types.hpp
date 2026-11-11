@@ -7,7 +7,6 @@
 
 inline constexpr uint32_t MAX_SHADOW_CASCADES = 4;
 inline constexpr uint32_t SHADOW_MAP_SIZE = 2048;
-inline constexpr uint32_t COMMAND_BUFFER_COUNT = 2;
 inline constexpr uint32_t BISTRO_TEXTURE_COUNT = 255;
 inline constexpr uint32_t SSAO_KERNEL_SIZE = 32;
 inline constexpr uint32_t SSAO_NOISE_DIM = 4;
@@ -16,6 +15,9 @@ inline constexpr uint32_t MAX_DIRECTIONAL_LIGHT = 1;
 inline constexpr uint32_t PERSISTENT_BINDING_COUNT = 14;
 inline constexpr uint32_t PER_FRAME_BINDING_COUNT = 3;
 inline constexpr uint32_t FRAMES_IN_FLIGHT = 2;
+inline constexpr uint32_t COMMAND_BUFFERS_PER_FRAME = 3;
+inline constexpr uint32_t COMMAND_BUFFER_COUNT =
+    FRAMES_IN_FLIGHT * COMMAND_BUFFERS_PER_FRAME;
 inline constexpr uint32_t PERSISTENT = 0;
 inline constexpr uint32_t PER_FRAME = 1;
 

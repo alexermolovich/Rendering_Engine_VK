@@ -4,6 +4,7 @@
 /cmake-build-*/
 /.cache/
 .clangd
+/build_win/
 
 CMakeFiles/
 CMakeCache.txt
@@ -15,7 +16,7 @@ Makefile
 *.ninja
 .ninja_*
 compile_commands.json
-
+build_win/
 # Local third-party/vendor dependencies and assets.
 
 /external/gltf-sample-assets  

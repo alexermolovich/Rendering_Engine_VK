@@ -122,8 +122,8 @@ class Renderer
 
     /* frame preparation and synchronization */
     FramePreparationQueue b_prepared_frames;
-    VkSemaphore b_frame_semaphores[COMMAND_BUFFER_COUNT] = {};
-    VkFence b_command_buffer_fences[COMMAND_BUFFER_COUNT] = {};
+    VkSemaphore b_frame_semaphores[FRAMES_IN_FLIGHT] = {};
+    VkFence b_command_buffer_fences[FRAMES_IN_FLIGHT] = {};
     uint32_t b_frame_index = 0;
     uint32_t b_image_index = 0;
     uint64_t b_submitted_sequence = 0;

@@ -265,7 +265,7 @@ void Renderer::create_logical_device(VkPhysicalDevice b_physical_device, VkDevic
     createInfo.pNext = &b_device_features2;
     createInfo.ppEnabledExtensionNames = b_device_extensions;
     createInfo.enabledLayerCount = VALIDATION_LAYER_COUNT;
-    createInfo.ppEnabledLayerNames = b_validation_layers;
+    //createInfo.ppEnabledLayerNames = b_validation_layers;
 
     if (vkCreateDevice(b_physical_device, &createInfo, nullptr, &b_device) != VK_SUCCESS)
     {
@@ -543,15 +543,27 @@ void Renderer::DrawFrame()
     map_buffer(b_device, b_shadow_gen_buffer[b_frame_index], &frame.shadows);
     map_buffer(b_device, b_sky_lights_data_buffer[b_frame_index], &frame.sky);
 
-    auto &command_buffer = b_command_buffers[b_frame_index];
-    const VkCommandBuffer cmd = command_buffer.handle();
-    VK_CHECK(vkResetCommandBuffer(cmd, 0));
+    const uint32_t command_base = b_frame_index * COMMAND_BUFFERS_PER_FRAME;
+    const VkCommandBuffer commands[COMMAND_BUFFERS_PER_FRAME] = {
+        b_command_buffers[command_base].handle(),
+        b_command_buffers[command_base + 1].handle(),
+        b_command_buffers[command_base + 2].handle()
+    };
+
     VkCommandBufferBeginInfo begin = {};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    VK_CHECK(vkBeginCommandBuffer(cmd, &begin));
+
+    for (VkCommandBuffer buffer : commands)
     {
-        TracyVkZone(b_tracy_gpu_context, cmd, "Scene Rendering Pass");
+        VK_CHECK(vkResetCommandBuffer(buffer, 0));
+        VK_CHECK(vkBeginCommandBuffer(buffer, &begin));
+    }
+
+    {
+        auto &command_buffer = b_command_buffers[command_base];
+        const VkCommandBuffer cmd = commands[0];
+        TracyVkZone(b_tracy_gpu_context, cmd, "Filtering and Geometry");
 
         // The current passes share targets and filtering output between frame slots.
         VkMemoryBarrier previous_frame = {};
@@ -629,6 +641,13 @@ void Renderer::DrawFrame()
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                              VK_ACCESS_SHADER_READ_BIT);
         }
+    }
+    VK_CHECK(vkEndCommandBuffer(commands[0]));
+
+    {
+        auto &command_buffer = b_command_buffers[command_base + 1];
+        const VkCommandBuffer cmd = commands[1];
+        TracyVkZone(b_tracy_gpu_context, cmd, "SSAO and Blur");
 
         // SSAO: estimate ambient occlusion from the scene depth and normals.
         {
@@ -653,6 +672,13 @@ void Renderer::DrawFrame()
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                              VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         }
+    }
+    VK_CHECK(vkEndCommandBuffer(commands[1]));
+
+    {
+        auto &command_buffer = b_command_buffers[command_base + 2];
+        const VkCommandBuffer cmd = commands[2];
+        TracyVkZone(b_tracy_gpu_context, cmd, "Composition and FXAA");
 
         // Screen-space reflections: generate reflections from the visible scene data.
         {
@@ -702,8 +728,8 @@ void Renderer::DrawFrame()
             b_swapchain_image_layouts[b_image_index] = swapchain_barrier.newLayout;
         }
     }
-    TracyVkCollect(b_tracy_gpu_context, cmd);
-    VK_CHECK(vkEndCommandBuffer(cmd));
+    TracyVkCollect(b_tracy_gpu_context, commands[2]);
+    VK_CHECK(vkEndCommandBuffer(commands[2]));
 
     const VkSemaphore rendered = b_render_finished_semaphores[b_image_index];
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -712,8 +738,8 @@ void Renderer::DrawFrame()
     submit.waitSemaphoreCount = 1;
     submit.pWaitSemaphores = &acquired;
     submit.pWaitDstStageMask = &wait_stage;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
+    submit.commandBufferCount = COMMAND_BUFFERS_PER_FRAME;
+    submit.pCommandBuffers = commands;
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &rendered;
     VK_CHECK(vkResetFences(b_device, 1, &fence));
