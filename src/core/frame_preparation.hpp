@@ -6,11 +6,12 @@
 #include <future>
 #include <utility>
 
-/* Workers publish camera and lighting snapshots without sharing mutable state. */
+/* Workers publish scene, camera, and lighting snapshots without sharing mutable state. */
 struct PreparedFrame
 {
     uint64_t sequence = 0;
     Camera camera;
+    SceneBounds sceneBounds = {};
     Uniform uniform = {};
     ShadowGenerationUniform shadows = {};
     SkyLightUniform sky = {};

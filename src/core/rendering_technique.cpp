@@ -58,7 +58,8 @@ void CascadeFilteringTechnique::draw(CommandBuffer &command_buffer)
 
     filteringPushConstants.modelViewProjection =
         b_renderer.b_uniform_data.proj * b_renderer.b_uniform_data.view * b_renderer.b_uniform_data.model;
-    filteringPushConstants.vertexStride = sizeof(GltfModel::Vertex);
+
+        filteringPushConstants.vertexStride = sizeof(GltfModel::Vertex);
     filteringPushConstants.indexCount = b_renderer.b_model_gltf.indextotalCount;
     filteringPushConstants.vertexCount = b_renderer.b_model_gltf.vertextotalCount;
 

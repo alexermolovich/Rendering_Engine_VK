@@ -33,12 +33,22 @@ void Renderer::setup_ubo()
 }
 
 /* Update cascades. */
-void Renderer::update_cascades(const Camera &b_camera, const glm::vec3 &lightDir, ShadowCascadeData *cascades,
-                               uint32_t cascadeCount)
+void Renderer::update_cascades(const Camera &b_camera, const glm::vec3 &lightDir,
+                               const SceneBounds &sceneBounds, const glm::mat4 &model,
+                               ShadowCascadeData *cascades, uint32_t cascadeCount)
 {
     cascadeCount = std::min<uint32_t>(cascadeCount, MAX_SHADOW_CASCADES);
     float nearPlane = b_camera.nearPlane;
     float farPlane = b_camera.farPlane;
+
+    glm::vec3 sceneCorners[8];
+    for (uint32_t c = 0; c < 8; ++c)
+    {
+        glm::vec3 corner((c & 1) ? sceneBounds.max.x : sceneBounds.min.x,
+                         (c & 2) ? sceneBounds.max.y : sceneBounds.min.y,
+                         (c & 4) ? sceneBounds.max.z : sceneBounds.min.z);
+        sceneCorners[c] = glm::vec3(model * glm::vec4(corner, 1.0f));
+    }
 
     for (uint32_t i = 0; i < cascadeCount; ++i)
     {
@@ -53,7 +63,7 @@ void Renderer::update_cascades(const Camera &b_camera, const glm::vec3 &lightDir
             center += corners[c];
         center /= 8.0f;
 
-        glm::vec3 lightPos = center - lightDir * 100.0f;
+        glm::vec3 lightPos = center - lightDir * 1000.0f;
         glm::mat4 lightView = glm::lookAt(lightPos, center, glm::vec3(0.0f, 1.0f, 0.0f));
         float minX = FLT_MAX, minY = FLT_MAX, minZ = FLT_MAX;
         float maxX = -FLT_MAX, maxY = -FLT_MAX, maxZ = -FLT_MAX;
@@ -65,11 +75,20 @@ void Renderer::update_cascades(const Camera &b_camera, const glm::vec3 &lightDir
             maxX = std::max(maxX, tr.x);
             minY = std::min(minY, tr.y);
             maxY = std::max(maxY, tr.y);
-            minZ = std::min(minZ, tr.z);
-            maxZ = std::max(maxZ, tr.z);
         }
 
-        glm::mat4 lightProj = glm::ortho(minX, maxX, minY, maxY, -maxZ - 50.0f, -minZ);
+        // Off-screen geometry can cast onto visible receivers. Cover the full scene
+        // along the light direction while keeping X/Y fitted to this cascade.
+        for (const auto &corner : sceneCorners)
+        {
+            float z = (lightView * glm::vec4(corner, 1.0f)).z;
+            minZ = std::min(minZ, z);
+            maxZ = std::max(maxZ, z);
+        }
+
+        const float depthPadding = std::max(1.0f, (maxZ - minZ) * 0.001f);
+        glm::mat4 lightProj = glm::orthoRH_ZO(minX, maxX, minY, maxY,
+                                            -maxZ - depthPadding, -minZ + depthPadding);
         cascades[i].viewProj = lightProj * lightView;
     }
 }
@@ -85,8 +104,8 @@ void Renderer::update_shadow_generation_data(bool shadowRenderTargetsReady)
         glm::uvec4(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, cascadeCount, shadowRenderTargetsReady ? 1u : 0u);
     uniform.bias = glm::vec4(0.0005f, 0.0f, 0.0f, 0.0f);
 
-    update_cascades(b_camera, b_sky_light_uniform_data.lightDirection, uniform.cascades,
-                    cascadeCount);
+    update_cascades(b_camera, b_sky_light_uniform_data.lightDirection,
+                    b_scene_bounds, b_uniform_data.model, uniform.cascades, cascadeCount);
 }
 
 /* Init sky light. */
@@ -190,6 +209,15 @@ void Renderer::load_sponza()
     vertexBuffer = std::move(new_vertices);
     vertex_count = unique_vertex_count;
     b_model_gltf.vertextotalCount = static_cast<uint32_t>(vertex_count);
+
+    require(!vertexBuffer.empty(), "Scene geometry is required for shadow caster bounds");
+    b_scene_bounds.min = glm::vec3(FLT_MAX);
+    b_scene_bounds.max = glm::vec3(-FLT_MAX);
+    for (const auto &vertex : vertexBuffer)
+    {
+        b_scene_bounds.min = glm::min(b_scene_bounds.min, vertex.pos);
+        b_scene_bounds.max = glm::max(b_scene_bounds.max, vertex.pos);
+    }
 
     {
         {

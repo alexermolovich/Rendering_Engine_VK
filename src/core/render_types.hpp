@@ -38,6 +38,13 @@ enum class BufferUsage
     staging
 };
 
+/* Object-space bounds of the geometry uploaded for rendering. */
+struct SceneBounds
+{
+    glm::vec3 min = glm::vec3(0.0f);
+    glm::vec3 max = glm::vec3(0.0f);
+};
+
 struct alignas(16) ShadowCascadeData
 {
     alignas(16) glm::mat4 viewProj = glm::mat4(1.0f);

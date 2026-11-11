@@ -434,13 +434,15 @@ void Renderer::init()
 }
 
 /* Workers only read copies; GLFW and Vulkan queue access stay on the main thread. */
-PreparedFrame Renderer::prepare_frame(uint64_t sequence, Camera camera, Uniform uniform, SkyLightUniform sky)
+PreparedFrame Renderer::prepare_frame(uint64_t sequence, Camera camera, Uniform uniform, SkyLightUniform sky,
+                                       SceneBounds sceneBounds)
 {
     camera.update_view_matrix();
     camera.update_proj_matrix();
     PreparedFrame frame;
     frame.sequence = sequence;
     frame.camera = camera;
+    frame.sceneBounds = sceneBounds;
     frame.uniform = uniform;
     frame.uniform.cameraPos = camera.pos;
     frame.uniform.view = camera.get_view_matrix();
@@ -451,7 +453,8 @@ PreparedFrame Renderer::prepare_frame(uint64_t sequence, Camera camera, Uniform 
     frame.shadows.shadowMapSizeCascadeCount =
         glm::uvec4(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, MAX_SHADOW_CASCADES, 1);
     frame.shadows.bias = glm::vec4(0.0005f, 0.0f, 0.0f, 0.0f);
-    update_cascades(camera, sky.lightDirection, frame.shadows.cascades, MAX_SHADOW_CASCADES);
+    update_cascades(camera, sky.lightDirection, sceneBounds, uniform.model,
+                    frame.shadows.cascades, MAX_SHADOW_CASCADES);
     return frame;
 }
 
@@ -473,9 +476,12 @@ void Renderer::run(uint64_t frame_limit)
         const auto camera = b_camera;
         const auto uniform = b_uniform_data;
         const auto sky = b_sky_light_uniform_data;
+        const auto sceneBounds = b_scene_bounds;
       
         b_prepared_frames.enqueue(
-            [sequence, camera, uniform, sky] { return prepare_frame(sequence, camera, uniform, sky); });
+            [sequence, camera, uniform, sky, sceneBounds] {
+                return prepare_frame(sequence, camera, uniform, sky, sceneBounds);
+            });
      
             if (b_prepared_frames.size() >= FRAMES_IN_FLIGHT)
             DrawFrame();
@@ -542,7 +548,7 @@ void Renderer::DrawFrame()
     if (frame.camera.aspectRatio != aspect)
     {
         frame.camera.update_aspect_ratio(aspect);
-        frame = prepare_frame(frame.sequence, frame.camera, frame.uniform, frame.sky);
+        frame = prepare_frame(frame.sequence, frame.camera, frame.uniform, frame.sky, frame.sceneBounds);
     }
     b_uniform_data = frame.uniform;
     b_shadow_gen_uniform_data = frame.shadows;

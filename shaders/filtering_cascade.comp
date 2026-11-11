@@ -169,7 +169,7 @@ void main()
 
     for (int cascade_index = 0; cascade_index < NUM_CASCADE_SHADOW_MAPS; cascade_index++)
     {
-        mat4 cascadeModelViewProjection = shadowsData.shadow.cascades[cascade_index].viewProj * ubo.model;
+        mat4 cascadeModelViewProjection = shadowsData.shadow.cascades[cascade_index].viewProj;
         generate_index_buffer_from_camera_view(cascadeModelViewProjection, cascade_index);
     }
 }

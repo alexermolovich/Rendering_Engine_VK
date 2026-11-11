@@ -154,6 +154,7 @@ class Renderer
 
     /* scene resources */
     GltfModel b_model_gltf;
+    SceneBounds b_scene_bounds;
     glm::mat4 b_identity_matrix = glm::mat4(1.0f);
     Uniform b_uniform_data = {};
     Buffer *b_ubo_buffer[FRAMES_IN_FLIGHT] = {};
@@ -258,7 +259,7 @@ class Renderer
 
     /* frame preparation */
     static PreparedFrame prepare_frame(uint64_t sequence, Camera camera, Uniform uniform,
-                                       SkyLightUniform sky);
+                                       SkyLightUniform sky, SceneBounds sceneBounds);
 
     /* rendering technique and pipeline setup */
     void init_rendering_tecniques();
@@ -319,6 +320,7 @@ class Renderer
     void add_shadow_cascade_layer_views();
     bool has_shadow_render_targets() const;
     static void update_cascades(const Camera &b_camera, const glm::vec3 &lightDir,
+                                const SceneBounds &sceneBounds, const glm::mat4 &model,
                                 ShadowCascadeData *cascades, uint32_t cascadeCount);
     void update_shadow_generation_data(bool shadowRenderTargetsReady);
 
