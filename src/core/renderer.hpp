@@ -9,6 +9,8 @@
 #include <tracy/TracyVulkan.hpp>
 #include <vulkan/vulkan_core.h>
 
+struct ImGuiContext;
+
 /* engine resource counts */
 #define VALIDATION_LAYER_COUNT 1
 #define DEVICE_EXTENSION_COUNT 8
@@ -76,6 +78,10 @@ class Renderer
     GLFWwindow *b_window = nullptr;
     bool b_initialized = false;
     bool b_glfw_initialized = false;
+
+    /* point light controls */
+    ImGuiContext *b_imgui_context = nullptr;
+    glm::vec3 b_point_light_position = glm::vec3(0.0f);
 
     /* vulkan instance and validation */
     const char *b_validation_layers[VALIDATION_LAYER_COUNT] = {"VK_LAYER_KHRONOS_validation"};
@@ -256,6 +262,13 @@ class Renderer
 
     /* camera updates */
     void update_camera();
+
+    /* ImGui lifetime and per-frame overlay */
+    void init_imgui();
+    void init_imgui_vulkan();
+    void update_imgui();
+    void draw_imgui(VkCommandBuffer cmd);
+    void shutdown_imgui();
 
     /* frame preparation */
     static PreparedFrame prepare_frame(uint64_t sequence, Camera camera, Uniform uniform,

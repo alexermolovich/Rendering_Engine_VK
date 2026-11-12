@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <glm/gtc/type_ptr.hpp>
+#include <imgui.h>
 #include <iterator>
 #include <meshoptimizer.h>
 #include <random>
@@ -418,6 +419,10 @@ void Renderer::init()
     init_sky_light();
     add_buffers();
     load_sponza();
+    const glm::vec3 sceneCenter = (b_scene_bounds.min + b_scene_bounds.max) * 0.5f;
+    const float pointLightHeight = glm::mix(b_scene_bounds.min.y, b_scene_bounds.max.y, 0.8f);
+    b_point_light_position = glm::vec3(b_uniform_data.model *
+        glm::vec4(sceneCenter.x - 200.0f, pointLightHeight - 800.0f, sceneCenter.z, 1.0f));
     add_textures();
     add_descriptor_sets();
     init_rendering_tecniques();
@@ -429,6 +434,7 @@ void Renderer::init()
         add_semaphore(b_frame_semaphores[i]);
     }
     b_previous_time = glfwGetTime();
+    init_imgui();
     b_initialized = true;
     spdlog::info("Renderer ready: {} pipelines, FIFO presentation", b_pipeline_count);
 }
@@ -543,6 +549,8 @@ void Renderer::DrawFrame()
     }
     if (acquire_result != VK_SUBOPTIMAL_KHR)
         VK_CHECK(acquire_result);
+
+    update_imgui();
 
     const float aspect = static_cast<float>(b_settings.width) / b_settings.height;
     if (frame.camera.aspectRatio != aspect)
@@ -810,6 +818,7 @@ void Renderer::recreate_swapchain()
     init_rendering_tecniques();
     prepare_persistent_descriptors();
     spdlog::info("Recreated swapchain: {}x{}", b_settings.width, b_settings.height);
+    init_imgui_vulkan();
 }
 
 /* Layer views must be released before the array image. */
@@ -872,6 +881,7 @@ void Renderer::shutdown()
         const auto result = vkDeviceWaitIdle(b_device);
         if (result != VK_SUCCESS)
             spdlog::error("Device wait during shutdown: {}", static_cast<int>(result));
+        shutdown_imgui();
         if (b_tracy_gpu_context)
             TracyVkDestroy(b_tracy_gpu_context);
         b_tracy_gpu_context = nullptr;
@@ -996,6 +1006,9 @@ void Renderer::update_camera()
     double currentTime = glfwGetTime();
     float deltaTime = static_cast<float>(currentTime - previousTime);
     previousTime = currentTime;
+
+    if (b_imgui_context && ImGui::GetIO().WantCaptureKeyboard)
+        return;
 
     glm::vec3 moveDelta(0.0f);
     glm::vec3 forward = glm::normalize(glm::vec3(b_camera.dir.x, 0.0f, b_camera.dir.z));

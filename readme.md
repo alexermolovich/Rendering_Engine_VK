@@ -23,6 +23,7 @@
 - [x] Composition pass with direct-light shading and cascade shadows
 - [x] Screen-space reflections (SSR) pass blended in compose
 - [x] FXAA
+- [x] ImGui point light position control
 - [x] CMake shader compilation to SPIR-V
 
 ## Active work
@@ -52,7 +53,6 @@
 - [ ] Volumetric fog pass
 - [ ] Render graph for pass ordering and resource tracking
 - [ ] Shader hot reload
-- [ ] ImGui debug panel
 - [ ] GPU timestamp profiler
 - [ ] Asset manifest for scenes, meshes, materials, and textures
 - [ ] Material cache
@@ -81,9 +81,16 @@ This repo now treats `external/` as local-only. Populate it with the dependencie
 - `external/tracy`
 - `external/tinygltf`
 - `external/spdlog`
+- `external/imgui` (Dear ImGui v1.93.0, including the GLFW and Vulkan backends)
 - `external/gltf-sample-assets` (Sponza is loaded from this tree)
 
 The build uses these existing local dependencies without modifying their source trees. `foundation/` has been removed; Camera is part of `renderer_core`.
+
+Fetch the pinned ImGui sources once before configuring:
+
+```bash
+git clone --depth 1 --branch v1.93.0 https://github.com/ocornut/imgui.git external/imgui
+```
 
 ### Configure And Build
 
@@ -151,6 +158,10 @@ The executable can be launched from any working directory. For example, from the
 ```bash
 ./build/vkml
 ```
+
+The **Point light** panel exposes one **Position** control for the light's world-space X/Y/Z coordinates.
+Drag a value to move the light live, or Ctrl-click it to type an exact coordinate. Keyboard input stays
+with the panel while editing; camera controls resume afterward. The initial position matches the existing scene.
 
 Shaders are resolved from the configured build directory via `VKML_BINARY_DIR`, and assets are resolved from the source tree via `VKML_SOURCE_DIR`. The working directory does not affect loading; keep the build tree and `external/` populated.
 
