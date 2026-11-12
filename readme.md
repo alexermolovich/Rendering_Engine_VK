@@ -1,4 +1,5 @@
 ## Roadmap
+<img width="799" height="600" alt="image" src="https://github.com/user-attachments/assets/848eafdd-406e-4081-8500-585015a23d6c" />
 
 ## Implemented Techniques
 
