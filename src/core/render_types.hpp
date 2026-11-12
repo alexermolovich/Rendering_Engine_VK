@@ -10,8 +10,8 @@ inline constexpr uint32_t SHADOW_MAP_SIZE = 2048;
 inline constexpr uint32_t BISTRO_TEXTURE_COUNT = 255;
 inline constexpr uint32_t SSAO_KERNEL_SIZE = 32;
 inline constexpr uint32_t SSAO_NOISE_DIM = 4;
-inline constexpr uint32_t MAX_POINT_LIGHTS = 1;
-inline constexpr uint32_t MAX_DIRECTIONAL_LIGHT = 1;
+inline constexpr uint32_t ACTIVE_POINT_LIGHTS = 1;
+inline constexpr uint32_t ACTIVE_DIRECTIONAL_LIGHTS = 1;
 inline constexpr uint32_t PERSISTENT_BINDING_COUNT = 16;
 inline constexpr uint32_t PER_FRAME_BINDING_COUNT = 3;
 inline constexpr uint32_t FRAMES_IN_FLIGHT = 2;
@@ -187,19 +187,19 @@ struct DirectionalLightPushConstants
 
 struct ComposePushConstants
 {
-    DirectionalLightPushConstants directionalLight[MAX_DIRECTIONAL_LIGHT];
+    DirectionalLightPushConstants directionalLight[ACTIVE_DIRECTIONAL_LIGHTS];
     int32_t active_directionalLight = 0;
-    PointLightPushConstants pointLight[MAX_POINT_LIGHTS];
+    PointLightPushConstants pointLights[ACTIVE_POINT_LIGHTS];
     int32_t active_pointlight = 0;
 };
 
 struct LightsDataBuffer
 {
 
-    DirectionalLightPushConstants directionalLight[MAX_DIRECTIONAL_LIGHT];
+    DirectionalLightPushConstants directionalLight[ACTIVE_DIRECTIONAL_LIGHTS];
     // int active_directionalLight = 0;
 
-    PointLightPushConstants pointLight[MAX_POINT_LIGHTS];
+    PointLightPushConstants pointLight[ACTIVE_POINT_LIGHTS];
     // int active_pointlight       = 0;
 };
 
@@ -223,6 +223,12 @@ struct ShadowRenderTargets
 
 static_assert(sizeof(ShadowCascadeData) % 16 == 0);
 static_assert(sizeof(ShadowGenerationUniform) % 16 == 0);
-static_assert(offsetof(ComposePushConstants, active_directionalLight) == 32);
-static_assert(offsetof(ComposePushConstants, pointLight) == 48);
-static_assert(offsetof(ComposePushConstants, active_pointlight) == 80);
+static_assert(offsetof(ComposePushConstants, active_directionalLight) ==
+              sizeof(DirectionalLightPushConstants) * ACTIVE_DIRECTIONAL_LIGHTS);
+static_assert(offsetof(ComposePushConstants, pointLights) ==
+              sizeof(DirectionalLightPushConstants) * ACTIVE_DIRECTIONAL_LIGHTS +
+                  alignof(PointLightPushConstants));
+static_assert(offsetof(ComposePushConstants, active_pointlight) ==
+              sizeof(DirectionalLightPushConstants) * ACTIVE_DIRECTIONAL_LIGHTS +
+                  alignof(PointLightPushConstants) +
+                  sizeof(PointLightPushConstants) * ACTIVE_POINT_LIGHTS);

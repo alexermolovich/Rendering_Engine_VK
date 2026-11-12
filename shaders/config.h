@@ -6,8 +6,8 @@
 #define SHADOW_MAP_SIZE       2048
 #define int32 int
 // Lights
-#define MAX_POINT_LIGHTS      1
-#define MAX_DIRECTIONAL_LIGHT 1
+#define ACTIVE_POINT_LIGHTS       1
+#define ACTIVE_DIRECTIONAL_LIGHTS 1
 
 struct ShadowCascadeData {
     mat4 viewProj;
@@ -52,10 +52,10 @@ struct DirectionalLight {
 // Compose push constants for light calculation.
 struct ComposePushConstants {
 
-    DirectionalLightPushConstants directionalLight[MAX_DIRECTIONAL_LIGHT];
+    DirectionalLightPushConstants directionalLight[ACTIVE_DIRECTIONAL_LIGHTS];
     int32 active_directionalLight;
 
-    PointLightPushConstants pointLight[MAX_POINT_LIGHTS];
+    PointLightPushConstants pointLight[ACTIVE_POINT_LIGHTS];
     int32 active_pointlight;
 
 };

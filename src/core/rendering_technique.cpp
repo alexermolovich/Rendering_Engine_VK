@@ -1,4 +1,5 @@
 #include "core/rendering_technique.hpp"
+#include "core/render_types.hpp"
 #include "renderer.hpp"
 #include "vulkan_check.hpp"
 #include <algorithm>
@@ -470,8 +471,23 @@ void ComposeTechnique::draw(CommandBuffer &command_buffer)
                   b_renderer.b_sky_light_uniform_data.lightIntensity);
     composePushConstants.directionalLight[0].color =
         glm::vec4(b_renderer.b_sky_light_uniform_data.lightColor, 1.0f);
-    composePushConstants.active_directionalLight = 1;
-    composePushConstants.active_pointlight = 0;
+    composePushConstants.active_directionalLight = ACTIVE_DIRECTIONAL_LIGHTS;
+    composePushConstants.active_pointlight = ACTIVE_POINT_LIGHTS;
+    
+    {
+        const glm::vec3 sceneCenter =
+            (b_renderer.b_scene_bounds.min + b_renderer.b_scene_bounds.max) * 0.5f;
+        const float pointLightHeight =
+            glm::mix(b_renderer.b_scene_bounds.min.y, b_renderer.b_scene_bounds.max.y, 0.8f);
+        
+        const glm::vec3 pointLightPosition =
+            glm::vec3(b_renderer.b_uniform_data.model *
+                      glm::vec4(sceneCenter.x-200, pointLightHeight-100*8,sceneCenter.z, 1.0f));
+        
+        composePushConstants.pointLights[0].positionRadius = glm::vec4(pointLightPosition,500);
+        composePushConstants.pointLights[0].colorIntensity = glm::vec4(1.0f, 0.85f, 0.65f, 8.0f);
+    }
+
     vkCmdPushConstants(cmd, b_renderer.b_pipeline_layout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
                            VK_SHADER_STAGE_COMPUTE_BIT,

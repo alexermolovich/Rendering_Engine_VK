@@ -114,15 +114,17 @@ void main()
     vec3 viewNormal = decodeNormalOct(texture(sampler2D(gBufferNormalSpecularRT, rtSampler1), inUV).rg);
     vec3 worldNormal = normalize(transpose(mat3(ubo.view)) * viewNormal);
 
-    vec3 lighting = albedo * (0.03 * ao);
+    vec3 ambient = albedo * (0.03 * ao);
+    vec3 directionalLighting = vec3(0.0);
     for (int i = 0; i < Lights.compose.active_directionalLight; ++i)
     {
         DirectionalLightPushConstants light = Lights.compose.directionalLight[i];
         vec3 toLight = normalize(-light.directionIntensity.xyz);
         float diffuse = max(dot(worldNormal, toLight), 0.0);
-        lighting += albedo * light.color.rgb * (light.directionIntensity.w * diffuse * ao);
+        directionalLighting += albedo * light.color.rgb * (light.directionIntensity.w * diffuse * ao);
     }
 
+    vec3 pointLighting = vec3(0.0);
     for (int i = 0; i < Lights.compose.active_pointlight; ++i)
     {
         PointLightPushConstants light = Lights.compose.pointLight[i];
@@ -131,7 +133,7 @@ void main()
         float radius = max(light.positionRadius.w, 0.001);
         float attenuation = pow(clamp(1.0 - distanceToLight / radius, 0.0, 1.0), 2.0);
         float diffuse = max(dot(worldNormal, lightVector / max(distanceToLight, 0.001)), 0.0);
-        lighting += albedo * light.colorIntensity.rgb * (light.colorIntensity.w * diffuse * attenuation * ao);
+        pointLighting += albedo * light.colorIntensity.rgb * (light.colorIntensity.w * diffuse * attenuation * ao);
     }
 
     float shadowVisibility = 1.0;
@@ -142,7 +144,6 @@ void main()
         shadowVisibility = sampleCascadeShadow(worldPosition, cascadeIndex);
     }
 
-    // Only direct lighting is shadowed; ambient light remains visible.
-    vec3 ambient = albedo * (0.03 * ao);
-    outColor = vec4(ambient + (lighting - ambient) * shadowVisibility, 1.0);
+    // The cascaded shadow map belongs to the directional light only.
+    outColor = vec4(ambient + directionalLighting * shadowVisibility + pointLighting, 1.0);
 }
