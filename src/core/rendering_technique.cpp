@@ -474,19 +474,8 @@ void ComposeTechnique::draw(CommandBuffer &command_buffer)
     composePushConstants.active_directionalLight = ACTIVE_DIRECTIONAL_LIGHTS;
     composePushConstants.active_pointlight = ACTIVE_POINT_LIGHTS;
     
-    {
-        const glm::vec3 sceneCenter =
-            (b_renderer.b_scene_bounds.min + b_renderer.b_scene_bounds.max) * 0.5f;
-        const float pointLightHeight =
-            glm::mix(b_renderer.b_scene_bounds.min.y, b_renderer.b_scene_bounds.max.y, 0.8f);
-        
-        const glm::vec3 pointLightPosition =
-            glm::vec3(b_renderer.b_uniform_data.model *
-                      glm::vec4(sceneCenter.x-200, pointLightHeight-100*8,sceneCenter.z, 1.0f));
-        
-        composePushConstants.pointLights[0].positionRadius = glm::vec4(pointLightPosition,500);
-        composePushConstants.pointLights[0].colorIntensity = glm::vec4(1.0f, 0.85f, 0.65f, 8.0f);
-    }
+    composePushConstants.pointLights[0].positionRadius = glm::vec4(b_renderer.b_point_light_position, 500.0f);
+    composePushConstants.pointLights[0].colorIntensity = glm::vec4(1.0f, 0.85f, 0.65f, 8.0f);
 
     vkCmdPushConstants(cmd, b_renderer.b_pipeline_layout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
@@ -552,6 +541,7 @@ void FxaaTechnique::draw(CommandBuffer &command_buffer)
 
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
+    b_renderer.draw_imgui(cmd);
     vkCmdEndRendering(cmd);
 }
 
