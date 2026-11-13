@@ -248,6 +248,10 @@ class Renderer
     Image b_skybox_image;
     RenderTarget *b_skybox_rt = nullptr;
 
+    GraphicsPipeline *raytracing_pipeline= nullptr;
+    RayTracingShader *ray_tracing_shader = nullptr;
+    RenderTarget *ray_tracing_render_target= nullptr;
+
     /* rendering techniques */
     CascadeFilteringTechnique b_cascade_filtering_technique;
     TriangleFilteringTechnique b_triangle_filtering_technique;
@@ -259,6 +263,7 @@ class Renderer
     FxaaTechnique b_fxaa_technique;
     SsaoBlurTechnique b_ssao_blur_technique;
     SkyboxTechnique b_skybox_rendering_technique;
+    RayTracingTechnique b_raytracing_rendering_technique;
 
     /* camera updates */
     void update_camera();
@@ -344,7 +349,7 @@ class Renderer
     void load_skybox(const std::string &filename);
 
     /* shader loading */
-    void load_shader_code(Shader &shader, VkShaderStageFlagBits stage, const std::string &filepath);
+    void load_shader_code(ShaderResource &shader, VkShaderStageFlagBits stage, const std::string &filepath);
 
     /* window creation */
     GLFWwindow *create_window(int width, int height, const char *title);

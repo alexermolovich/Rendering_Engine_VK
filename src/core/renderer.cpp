@@ -24,7 +24,8 @@ Renderer::Renderer()
       b_compose_technique(*this),
       b_fxaa_technique(*this),
       b_ssao_blur_technique(*this),
-      b_skybox_rendering_technique(*this)
+      b_skybox_rendering_technique(*this),
+      b_raytracing_rendering_technique(*this)
 {
 }
 

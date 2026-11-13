@@ -89,22 +89,50 @@ class RenderTarget
     VkDescriptorImageInfo imageInfo = {};
 };
 
-/* Shader modules stay alive until the renderer explicitly releases them. */
-class Shader
+/* Common loading and explicit release interface for shader programs. */
+class ShaderResource
+{
+  public:
+    virtual ~ShaderResource() noexcept(false) = default;
+    virtual void load(VkDevice device, VkShaderStageFlagBits stage,
+                      std::span<const uint32_t> code) = 0;
+    virtual void destroy(VkDevice device) = 0;
+};
+
+/* Raster and compute modules stay alive until the renderer explicitly releases them. */
+class Shader : public ShaderResource
 {
   public:
     Shader()
     {
     }
-    ~Shader() noexcept(false);
+    ~Shader() noexcept(false) override;
     Shader(const Shader &) = delete;
     Shader &operator=(const Shader &) = delete;
-    void load(VkDevice device, VkShaderStageFlagBits stage, std::span<const uint32_t> code);
-    void destroy(VkDevice device);
+    void load(VkDevice device, VkShaderStageFlagBits stage, std::span<const uint32_t> code) override;
+    void destroy(VkDevice device) override;
     VkShaderModule vert = VK_NULL_HANDLE;
     VkShaderModule geom = VK_NULL_HANDLE;
     VkShaderModule frag = VK_NULL_HANDLE;
     VkShaderModule comp = VK_NULL_HANDLE;
+};
+
+/* Ray-tracing programs own only ray-tracing stages. */
+class RayTracingShader final : public ShaderResource
+{
+  public:
+    RayTracingShader() = default;
+    ~RayTracingShader() noexcept(false) override;
+    RayTracingShader(const RayTracingShader &) = delete;
+    RayTracingShader &operator=(const RayTracingShader &) = delete;
+    void load(VkDevice device, VkShaderStageFlagBits stage, std::span<const uint32_t> code) override;
+    void destroy(VkDevice device) override;
+    VkShaderModule raygen = VK_NULL_HANDLE;
+    VkShaderModule miss = VK_NULL_HANDLE;
+    VkShaderModule closestHit = VK_NULL_HANDLE;
+    VkShaderModule anyHit = VK_NULL_HANDLE;
+    VkShaderModule intersection = VK_NULL_HANDLE;
+    VkShaderModule callable = VK_NULL_HANDLE;
 };
 
 /* Shared sampling state with an explicit release operation. */

@@ -98,6 +98,20 @@ void Shader::destroy(VkDevice device)
             vkDestroyShaderModule(device, std::exchange(*module, VK_NULL_HANDLE), nullptr);
 }
 
+RayTracingShader::~RayTracingShader() noexcept(false)
+{
+    require_destroyed(!raygen && !miss && !closestHit && !anyHit && !intersection && !callable,
+                      "RayTracingShader");
+}
+
+/* Release every loaded ray-tracing stage, including partially loaded programs. */
+void RayTracingShader::destroy(VkDevice device)
+{
+    for (auto *module : {&raygen, &miss, &closestHit, &anyHit, &intersection, &callable})
+        if (*module)
+            vkDestroyShaderModule(device, std::exchange(*module, VK_NULL_HANDLE), nullptr);
+}
+
 Sampler::~Sampler() noexcept(false)
 {
     require_destroyed(!sampler, "Sampler");
@@ -654,6 +668,43 @@ void Shader::load(VkDevice device, VkShaderStageFlagBits stage, std::span<const 
         throw std::runtime_error("Unsupported shader stage");
     }
     require_destroyed(!*module, "Shader stage replacement");
+    VkShaderModuleCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    info.codeSize = code.size() * sizeof(uint32_t);
+    info.pCode = code.data();
+    VK_CHECK(vkCreateShaderModule(device, &info, nullptr, module));
+}
+
+/* Reject raster and compute stages before creating a ray-tracing module. */
+void RayTracingShader::load(VkDevice device, VkShaderStageFlagBits stage,
+                           std::span<const uint32_t> code)
+{
+    require(!code.empty(), "Ray tracing shader code is empty");
+    VkShaderModule *module = nullptr;
+    switch (stage)
+    {
+    case VK_SHADER_STAGE_RAYGEN_BIT_KHR:
+        module = &raygen;
+        break;
+    case VK_SHADER_STAGE_MISS_BIT_KHR:
+        module = &miss;
+        break;
+    case VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR:
+        module = &closestHit;
+        break;
+    case VK_SHADER_STAGE_ANY_HIT_BIT_KHR:
+        module = &anyHit;
+        break;
+    case VK_SHADER_STAGE_INTERSECTION_BIT_KHR:
+        module = &intersection;
+        break;
+    case VK_SHADER_STAGE_CALLABLE_BIT_KHR:
+        module = &callable;
+        break;
+    default:
+        throw std::runtime_error("Unsupported ray tracing shader stage");
+    }
+    require_destroyed(!*module, "Ray tracing shader stage replacement");
     VkShaderModuleCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     info.codeSize = code.size() * sizeof(uint32_t);

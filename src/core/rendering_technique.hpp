@@ -117,3 +117,12 @@ class SkyboxTechnique: public RenderingTechnique
     }
     void draw(CommandBuffer &command_buffer) override;
 };
+
+class RayTracingTechnique: public RenderingTechnique
+{
+  public:
+    explicit RayTracingTechnique(Renderer &renderer) : RenderingTechnique(renderer)
+    {
+    }
+    void draw(CommandBuffer &command_buffer) override;
+};

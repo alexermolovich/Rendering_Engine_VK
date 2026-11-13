@@ -386,7 +386,7 @@ bool Renderer::has_shadow_render_targets() const
 }
 
 /* Load shader code. */
-void Renderer::load_shader_code(Shader &shader, VkShaderStageFlagBits stage, const std::string &filepath)
+void Renderer::load_shader_code(ShaderResource &shader, VkShaderStageFlagBits stage, const std::string &filepath)
 {
     const std::filesystem::path shaderPath = std::filesystem::path(VKML_BINARY_DIR) / filepath;
     std::ifstream file(shaderPath, std::ios::ate | std::ios::binary);

@@ -126,8 +126,7 @@ void TriangleFilteringTechnique::draw(CommandBuffer &command_buffer)
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, b_renderer.b_t_filtering_pipeline->handle());
         vkCmdPushConstants(cmd, b_renderer.b_pipeline_layout,
                            VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
-                               VK_SHADER_STAGE_VERTEX_BIT,
-                           0, sizeof(TriangleFilteringPushConstants), &filteringPushConstants);
+                               VK_SHADER_STAGE_VERTEX_BIT,0, sizeof(TriangleFilteringPushConstants), &filteringPushConstants);
 
         vkCmdDispatch(cmd, groupCount, 1, 1);
     }
@@ -603,4 +602,9 @@ void SkyboxTechnique::draw(CommandBuffer &command_buffer)
                             0, nullptr);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);
+}
+
+void RayTracingTechnique::draw(CommandBuffer &command_buffer)
+{
+
 }
