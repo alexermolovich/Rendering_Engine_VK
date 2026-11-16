@@ -25,6 +25,7 @@
 - [x] Screen-space reflections (SSR) pass blended in compose
 - [x] FXAA
 - [x] ImGui point light position control
+- [x] Bindless descriptor indexing  
 - [x] CMake shader compilation to SPIR-V
 
 ## Active work
