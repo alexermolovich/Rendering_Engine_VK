@@ -606,5 +606,20 @@ void SkyboxTechnique::draw(CommandBuffer &command_buffer)
 
 void RayTracingTechnique::draw(CommandBuffer &command_buffer)
 {
-
+    auto target = nullptr;
+    assert(target.currentLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    assert(b_renderer.b_skybox_image.currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	VkDeviceOrHostAddressConstKHR vertex_data_device_address{};
+	VkDeviceOrHostAddressConstKHR index_data_device_address{};
+	VkDeviceOrHostAddressConstKHR transform_matrix_device_address{};
+	
+    VkAccelerationStructureGeometryTrianglesDataKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
+	triangles.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+	triangles.vertexFormat  = VK_FORMAT_R32G32B32_SFLOAT;
+	triangles.vertexData    = vertex_data_device_address;
+	triangles.maxVertex     = b_renderer.b_model_gltf.vertextotalCount - 1;
+	triangles.vertexStride  = sizeof(GltfModel::Vertex);
+	triangles.indexType     = VK_INDEX_TYPE_UINT32;
+	triangles.indexData     = index_data_device_address;
+	triangles.transformData = transform_matrix_device_address;
 }
