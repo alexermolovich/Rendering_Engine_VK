@@ -63,8 +63,6 @@
 - [ ] Material cache
 - [ ] Texture cache
 - [ ] Async asset loading jobs
-- [ ] Screenshot capture
-- [ ] README screenshots
 
 ## Build And Run
 
