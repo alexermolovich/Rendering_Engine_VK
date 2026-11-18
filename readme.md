@@ -32,6 +32,9 @@
 
 - [ ] SSAO blur improvements
 - [ ] SSR quality improvements (edge fades, temporal stability)
+- [x] Ray tracing shader foundation (primary rays, sky miss, barycentric closest-hit)
+- [ ] Ray tracing device features, acceleration structures, pipeline, and shader binding table
+- [ ] Ray tracing dispatch and composition
 
 ## Future Roadmap
 
@@ -166,6 +169,34 @@ Drag a value to move the light live, or Ctrl-click it to type an exact coordinat
 with the panel while editing; camera controls resume afterward. The initial position matches the existing scene.
 
 Shaders are resolved from the configured build directory via `VKML_BINARY_DIR`, and assets are resolved from the source tree via `VKML_SOURCE_DIR`. The working directory does not affect loading; keep the build tree and `external/` populated.
+
+### Ray Tracing Progress
+
+The build compiles `raytracing.rgen`, `raytracing.rmiss`, and `raytracing.rchit`
+with `--target-env=vulkan1.2`. The shaders generate camera rays, return a sky
+color on a miss, and visualize triangle barycentrics on a hit. They use
+[`GL_EXT_ray_tracing`](https://github.com/KhronosGroup/GLSL/blob/main/extensions/ext/GLSL_EXT_ray_tracing.txt).
+The optional any-hit, intersection, and callable files are still placeholders
+and are excluded from compilation.
+
+The shader interface for the upcoming ray tracing pipeline is:
+
+| Set / binding | Resource |
+| --- | --- |
+| 0 / 0 | Top-level acceleration structure |
+| 0 / 1 | `rgba16f` storage image in `VK_IMAGE_LAYOUT_GENERAL` |
+| 1 / 0 | Existing `Uniform` camera buffer, visible to the ray generation stage |
+
+Set 0 needs a dedicated ray tracing descriptor layout. Dispatch should match the
+output image width and height, with depth 1, one ray generation record, one miss
+record, and one triangle hit group. The payload is a `vec3` at location 0 and
+only one ray recursion level is needed. This initial shader path treats geometry
+as opaque and does not yet read materials.
+
+Runtime integration is pending: the renderer does not enable ray tracing device
+features, build acceleration structures, create the pipeline/shader binding table,
+or dispatch these shaders. `RayTracingTechnique::draw` reports this explicitly if
+called; it is not part of the current frame sequence.
 
 ### Release Build
 

@@ -89,14 +89,23 @@ file(GLOB SHADERS CONFIGURE_DEPENDS
     "${SHADER_DIR}/*.vert"
     "${SHADER_DIR}/*.frag"
     "${SHADER_DIR}/*.comp"
+    "${SHADER_DIR}/*.rgen"
+    "${SHADER_DIR}/*.rmiss"
+    "${SHADER_DIR}/*.rchit"
 )
+# Any-hit, intersection, and callable files remain empty placeholders.
 set(SPIRV_SHADERS "")
 foreach(SHADER IN LISTS SHADERS)
     get_filename_component(FILE_NAME "${SHADER}" NAME)
     set(SPIRV "${SPIRV_DIR}/${FILE_NAME}.spv")
+    set(SHADER_TARGET_OPTIONS "")
+    if(SHADER MATCHES "\\.(rgen|rmiss|rchit)$")
+        # KHR ray tracing shaders require SPIR-V 1.4 or newer.
+        list(APPEND SHADER_TARGET_OPTIONS --target-env=vulkan1.2)
+    endif()
     add_custom_command(
         OUTPUT "${SPIRV}"
-        COMMAND "${Vulkan_GLSLC_EXECUTABLE}" -I "${SHADER_DIR}" "${SHADER}" -o "${SPIRV}"
+        COMMAND "${Vulkan_GLSLC_EXECUTABLE}" ${SHADER_TARGET_OPTIONS} -I "${SHADER_DIR}" "${SHADER}" -o "${SPIRV}"
         DEPENDS "${SHADER}" "${SHADER_DIR}/config.h"
         COMMENT "Compiling shader ${FILE_NAME}"
         VERBATIM
